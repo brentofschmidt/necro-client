@@ -10,6 +10,8 @@ import { Home } from './components/Home'
 import { ForgotPassword } from './components/ForgotPassword'
 import { ResetPassword } from './components/ResetPassword'
 import { AccountSettings } from './components/AccountSettings'
+import { PublishArticle } from './components/PublishArticle'
+import { PublicProfile } from './components/PublicProfile'
 
 const router = createBrowserRouter([
   {
@@ -33,6 +35,8 @@ const router = createBrowserRouter([
           { path: '/play', element: <Home /> },
           { path: '/social', element: <Home /> },
           { path: '/account', element: <AccountSettings /> },
+          { path: '/publish', element: <PublishArticle /> },
+          { path: '/u/:userId', element: <PublicProfile /> },
         ],
       },
       { path: '*', element: <Navigate to="/" replace /> },

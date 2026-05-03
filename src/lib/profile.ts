@@ -10,6 +10,7 @@ export type AccountTier =
   | 'employee'
   | 'tester'
   | 'vip'
+export type UserRole = 'member' | 'moderator' | 'admin'
 
 export type AccountProfile = {
   id: string
@@ -48,12 +49,26 @@ export type AccountProfile = {
   // Account tier (read-only for users)
   account_tier: AccountTier
 
+  // Role + moderation (read-only for users; admin-only writes)
+  role: UserRole
+  is_banned: boolean
+  banned_until: string | null
+  banned_reason: string | null
+
   // Wallet
   platform_currency: number
 
   // Timestamps
   created_at: string
   last_logged_in_at: string | null
+}
+
+export function isAdmin(profile: AccountProfile | null): boolean {
+  return profile?.role === 'admin'
+}
+
+export function isStaff(profile: AccountProfile | null): boolean {
+  return profile?.role === 'admin' || profile?.role === 'moderator'
 }
 
 const PROFILE_COLUMNS = [
@@ -80,6 +95,10 @@ const PROFILE_COLUMNS = [
   'profile_visibility',
   'online_visibility',
   'account_tier',
+  'role',
+  'is_banned',
+  'banned_until',
+  'banned_reason',
   'platform_currency',
   'created_at',
   'last_logged_in_at',
@@ -101,7 +120,20 @@ export async function fetchProfile(userId: string): Promise<AccountProfile | nul
 
 export async function updateProfile(
   userId: string,
-  patch: Partial<Omit<AccountProfile, 'id' | 'account_tier' | 'platform_currency' | 'created_at' | 'last_logged_in_at'>>,
+  patch: Partial<
+    Omit<
+      AccountProfile,
+      | 'id'
+      | 'account_tier'
+      | 'role'
+      | 'is_banned'
+      | 'banned_until'
+      | 'banned_reason'
+      | 'platform_currency'
+      | 'created_at'
+      | 'last_logged_in_at'
+    >
+  >,
 ): Promise<AccountProfile | null> {
   const { data, error } = await supabase
     .schema('accounts')
@@ -112,6 +144,32 @@ export async function updateProfile(
     .maybeSingle()
   if (error) throw error
   return (data as AccountProfile | null) ?? null
+}
+
+export type PublicProfile = {
+  id: string
+  display_name: string
+  avatar_url: string | null
+  bio: string
+  pronouns: string
+  region: Region | null
+  account_tier: AccountTier
+  role: UserRole
+  is_banned: boolean
+  banned_until: string | null
+  created_at: string
+}
+
+export async function fetchPublicProfile(userId: string): Promise<PublicProfile | null> {
+  const { data, error } = await supabase
+    .schema('accounts')
+    .rpc('get_public_profile', { target_id: userId })
+  if (error) {
+    console.error('Failed to load public profile:', error.message)
+    return null
+  }
+  const row = Array.isArray(data) ? data[0] : data
+  return (row as PublicProfile | undefined) ?? null
 }
 
 export function nullIfEmpty(s: string): string | null {

@@ -754,3 +754,393 @@ body {
   text-decoration: underline;
 }
 
+.home-page {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.news-header {
+  margin-bottom: 24px;
+}
+
+.news-title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.news-list {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.news-article {
+  position: relative;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  border-radius: 8px;
+  padding: 22px 24px;
+}
+
+.article-menu {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+.article-menu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.article-menu-trigger:hover,
+.article-menu-trigger[aria-expanded='true'] {
+  background: var(--bg-0);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.article-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 140px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  z-index: 5;
+}
+
+.article-menu-item {
+  display: block;
+  width: 100%;
+  padding: 10px 14px;
+  background: transparent;
+  border: none;
+  text-align: left;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.article-menu-item:hover {
+  background: var(--bg-0);
+  color: var(--accent);
+}
+
+.article-menu-item-danger:hover {
+  color: var(--danger);
+}
+
+.public-profile-page {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.public-profile-header {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 20px;
+}
+
+.public-profile-avatar {
+  flex-shrink: 0;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #1a0404;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  font-weight: 700;
+  overflow: hidden;
+}
+
+.public-profile-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.public-profile-identity {
+  min-width: 0;
+  flex: 1;
+}
+
+.public-profile-name {
+  margin: 0 0 6px;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.public-profile-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.public-profile-dot {
+  color: var(--text-dim);
+}
+
+.public-profile-bio p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.public-profile-info {
+  grid-template-columns: 120px 1fr;
+  margin-bottom: 20px;
+}
+
+.role-pill {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.role-pill-admin {
+  background: rgba(255, 59, 59, 0.12);
+  color: var(--accent);
+  border: 1px solid rgba(255, 59, 59, 0.3);
+}
+
+.role-pill-moderator {
+  background: var(--bg-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.role-pill-member {
+  background: var(--bg-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+
+.tier-pill {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  background: var(--bg-2);
+  color: var(--text-dim);
+  border: 1px dashed var(--border);
+}
+
+.user-status-pill {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.user-status-pill-active {
+  background: rgba(120, 220, 140, 0.1);
+  color: #78dc8c;
+  border: 1px solid rgba(120, 220, 140, 0.3);
+}
+
+.user-status-pill-banned {
+  background: rgba(255, 95, 109, 0.12);
+  color: var(--danger);
+  border: 1px solid rgba(255, 95, 109, 0.3);
+}
+
+.news-article-title {
+  margin: 0 0 6px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--text);
+}
+
+.news-article-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 14px;
+}
+
+.news-article-author {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.news-article-author-link {
+  text-decoration: none;
+}
+
+.news-article-author-link:hover {
+  text-decoration: underline;
+}
+
+.news-article-dot {
+  color: var(--text-dim);
+}
+
+.news-article-body p {
+  margin: 0 0 10px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.news-article-body p:last-child {
+  margin-bottom: 0;
+}
+
+.news-empty {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.publish-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 32px;
+  align-items: start;
+}
+
+.publish-form {
+  min-width: 0;
+}
+
+.publish-form-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.publish-form-actions + .message {
+  margin-top: 14px;
+}
+
+.publish-list {
+  position: sticky;
+  top: 80px;
+}
+
+.publish-article-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.publish-article-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.publish-article-info {
+  min-width: 0;
+}
+
+.publish-article-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.publish-article-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.publish-article-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.status-pill-draft {
+  background: var(--bg-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+
+.status-pill-published {
+  background: rgba(255, 59, 59, 0.12);
+  color: var(--accent);
+  border: 1px solid rgba(255, 59, 59, 0.3);
+}
+
+.status-pill-archived {
+  background: var(--bg-2);
+  color: var(--text-dim);
+  border: 1px dashed var(--border);
+}
+
+@media (max-width: 880px) {
+  .publish-layout {
+    grid-template-columns: 1fr;
+  }
+  .publish-list {
+    position: static;
+  }
+}
+

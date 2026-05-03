@@ -8,8 +8,21 @@ const STAGE_ALLOWED_PATHS: Record<Exclude<Stage, 'loading'>, string[]> = {
   login: ['/', '/play', '/social', '/login', '/register', '/forgot-password'],
   enroll: ['/mfa-enroll'],
   challenge: ['/mfa'],
-  dashboard: ['/', '/play', '/social', '/account'],
+  dashboard: ['/', '/play', '/social', '/account', '/publish'],
   recovery: ['/reset-password'],
+}
+
+const STAGE_ALLOWED_PREFIXES: Record<Exclude<Stage, 'loading'>, string[]> = {
+  login: ['/u/'],
+  enroll: [],
+  challenge: [],
+  dashboard: ['/u/'],
+  recovery: [],
+}
+
+function isPathAllowed(stage: Exclude<Stage, 'loading'>, pathname: string): boolean {
+  if (STAGE_ALLOWED_PATHS[stage].includes(pathname)) return true
+  return STAGE_ALLOWED_PREFIXES[stage].some((prefix) => pathname.startsWith(prefix))
 }
 
 const STAGE_DEFAULT_PATH: Record<Exclude<Stage, 'loading'>, string> = {
@@ -33,8 +46,7 @@ export function AuthGate() {
 
   useEffect(() => {
     if (stage === 'loading') return
-    const allowed = STAGE_ALLOWED_PATHS[stage]
-    if (!allowed.includes(location.pathname)) {
+    if (!isPathAllowed(stage, location.pathname)) {
       navigate(STAGE_DEFAULT_PATH[stage], { replace: true })
     }
   }, [stage, location.pathname, navigate])

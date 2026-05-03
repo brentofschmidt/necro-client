@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import { User } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
-import { AccountProfile } from '../lib/profile'
+import { AccountProfile, isAdmin } from '../lib/profile'
 
 function displayNameFor(user: User, profile: AccountProfile | null): string {
   if (profile?.display_name) return profile.display_name
@@ -62,6 +62,11 @@ export function Navbar({
                 <Link to="/account" className="user-menu-item">
                   Account settings
                 </Link>
+                {isAdmin(profile) && (
+                  <Link to="/publish" className="user-menu-item">
+                    Publish article
+                  </Link>
+                )}
                 <button className="user-menu-item" onClick={handleSignOut}>
                   Sign out
                 </button>
