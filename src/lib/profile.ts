@@ -1,0 +1,120 @@
+import { supabase } from './supabase'
+
+export type ProfileVisibility = 'public' | 'friends' | 'private'
+export type OnlineVisibility = 'online' | 'away' | 'invisible'
+export type Region = 'NA' | 'EU' | 'KR' | 'CN' | 'OCE' | 'TW'
+export type AccountTier =
+  | 'standard'
+  | 'founder'
+  | 'subscriber'
+  | 'employee'
+  | 'tester'
+  | 'vip'
+
+export type AccountProfile = {
+  id: string
+
+  // Public identity
+  display_name: string
+  avatar_url: string | null
+  bio: string
+  pronouns: string
+
+  // Legal identity (PII)
+  first_name: string
+  last_name: string
+  date_of_birth: string | null
+  country: string
+
+  // Locale / region
+  region: Region | null
+  locale: string
+  timezone: string
+  currency: string
+
+  // Contact
+  backup_email: string | null
+
+  // Preferences
+  marketing_opt_in: boolean
+  analytics_opt_in: boolean
+  crash_reports_opt_in: boolean
+  accept_friend_requests: boolean
+  searchable_by_email: boolean
+  searchable_by_phone: boolean
+  profile_visibility: ProfileVisibility
+  online_visibility: OnlineVisibility
+
+  // Account tier (read-only for users)
+  account_tier: AccountTier
+
+  // Wallet
+  platform_currency: number
+
+  // Timestamps
+  created_at: string
+  last_logged_in_at: string | null
+}
+
+const PROFILE_COLUMNS = [
+  'id',
+  'display_name',
+  'avatar_url',
+  'bio',
+  'pronouns',
+  'first_name',
+  'last_name',
+  'date_of_birth',
+  'country',
+  'region',
+  'locale',
+  'timezone',
+  'currency',
+  'backup_email',
+  'marketing_opt_in',
+  'analytics_opt_in',
+  'crash_reports_opt_in',
+  'accept_friend_requests',
+  'searchable_by_email',
+  'searchable_by_phone',
+  'profile_visibility',
+  'online_visibility',
+  'account_tier',
+  'platform_currency',
+  'created_at',
+  'last_logged_in_at',
+].join(', ')
+
+export async function fetchProfile(userId: string): Promise<AccountProfile | null> {
+  const { data, error } = await supabase
+    .schema('accounts')
+    .from('users')
+    .select(PROFILE_COLUMNS)
+    .eq('id', userId)
+    .maybeSingle()
+  if (error) {
+    console.error('Failed to load accounts.users profile:', error.message)
+    return null
+  }
+  return (data as AccountProfile | null) ?? null
+}
+
+export async function updateProfile(
+  userId: string,
+  patch: Partial<Omit<AccountProfile, 'id' | 'account_tier' | 'platform_currency' | 'created_at' | 'last_logged_in_at'>>,
+): Promise<AccountProfile | null> {
+  const { data, error } = await supabase
+    .schema('accounts')
+    .from('users')
+    .update(patch)
+    .eq('id', userId)
+    .select(PROFILE_COLUMNS)
+    .maybeSingle()
+  if (error) throw error
+  return (data as AccountProfile | null) ?? null
+}
+
+export function nullIfEmpty(s: string): string | null {
+  const trimmed = s.trim()
+  return trimmed === '' ? null : trimmed
+}

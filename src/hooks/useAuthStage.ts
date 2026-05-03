@@ -1,19 +1,40 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
+import { AccountProfile, fetchProfile } from '../lib/profile'
 
 export type Stage = 'loading' | 'login' | 'enroll' | 'challenge' | 'dashboard' | 'recovery'
 
-export function useAuthStage() {
+export type AuthStageValue = {
+  session: Session | null
+  stage: Stage
+  profile: AccountProfile | null
+  refreshProfile: () => Promise<void>
+}
+
+export function useAuthStage(): AuthStageValue {
   const [session, setSession] = useState<Session | null>(null)
   const [stage, setStage] = useState<Stage>('loading')
+  const [profile, setProfile] = useState<AccountProfile | null>(null)
   const recoveryRef = useRef(false)
+  const mountedRef = useRef(true)
+
+  const refreshProfile = useCallback(async () => {
+    const { data } = await supabase.auth.getSession()
+    const userId = data.session?.user?.id
+    if (!userId) {
+      if (mountedRef.current) setProfile(null)
+      return
+    }
+    const next = await fetchProfile(userId)
+    if (mountedRef.current) setProfile(next)
+  }, [])
 
   useEffect(() => {
-    let mounted = true
+    mountedRef.current = true
 
     async function evaluate(current: Session | null) {
-      if (!mounted) return
+      if (!mountedRef.current) return
       if (recoveryRef.current && current) {
         setStage('recovery')
         return
@@ -23,7 +44,7 @@ export function useAuthStage() {
         return
       }
       const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
-      if (!mounted) return
+      if (!mountedRef.current) return
       if (error || !data) {
         setStage('login')
         return
@@ -37,10 +58,20 @@ export function useAuthStage() {
       }
     }
 
+    async function loadProfileFor(userId: string | undefined) {
+      if (!userId) {
+        if (mountedRef.current) setProfile(null)
+        return
+      }
+      const next = await fetchProfile(userId)
+      if (mountedRef.current) setProfile(next)
+    }
+
     supabase.auth.getSession().then(({ data }) => {
-      if (!mounted) return
+      if (!mountedRef.current) return
       setSession(data.session)
       evaluate(data.session)
+      loadProfileFor(data.session?.user?.id)
     })
 
     const { data: subscription } = supabase.auth.onAuthStateChange((event, next) => {
@@ -53,13 +84,14 @@ export function useAuthStage() {
         recoveryRef.current = false
       }
       evaluate(next)
+      loadProfileFor(next?.user?.id)
     })
 
     return () => {
-      mounted = false
+      mountedRef.current = false
       subscription.subscription.unsubscribe()
     }
   }, [])
 
-  return { session, stage }
+  return { session, stage, profile, refreshProfile }
 }
