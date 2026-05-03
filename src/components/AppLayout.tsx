@@ -1,6 +1,7 @@
 import { Outlet, useOutletContext } from 'react-router-dom'
 import { AuthOutletContext } from './AuthGate'
 import { Navbar } from './Navbar'
+import { Footer } from './Footer'
 
 export function AppLayout() {
   const ctx = useOutletContext<AuthOutletContext>()
@@ -11,6 +12,7 @@ export function AppLayout() {
       <main className="app-main">
         <Outlet context={ctx} />
       </main>
+      <Footer />
     </div>
   )
 }

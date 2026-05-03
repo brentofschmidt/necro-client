@@ -215,7 +215,6 @@ function ProfileSection({ user, profile, onSaved }: SectionProps) {
   const [displayName, setDisplayName] = useState(profile?.display_name ?? '')
   const [avatarUrl, setAvatarUrl] = useState(profile?.avatar_url ?? '')
   const [bio, setBio] = useState(profile?.bio ?? '')
-  const [pronouns, setPronouns] = useState(profile?.pronouns ?? '')
   const [submitting, setSubmitting] = useState(false)
   const f = useFeedback()
 
@@ -223,7 +222,6 @@ function ProfileSection({ user, profile, onSaved }: SectionProps) {
     setDisplayName(profile?.display_name ?? '')
     setAvatarUrl(profile?.avatar_url ?? '')
     setBio(profile?.bio ?? '')
-    setPronouns(profile?.pronouns ?? '')
   }, [profile])
 
   async function save(e: FormEvent) {
@@ -235,7 +233,6 @@ function ProfileSection({ user, profile, onSaved }: SectionProps) {
         display_name: displayName.trim(),
         avatar_url: nullIfEmpty(avatarUrl),
         bio: bio.trim(),
-        pronouns: pronouns.trim(),
       })
       await onSaved()
       f.setInfo('Profile updated.')
@@ -266,18 +263,6 @@ function ProfileSection({ user, profile, onSaved }: SectionProps) {
             onChange={(e) => setDisplayName(e.target.value)}
             maxLength={32}
             placeholder="Necromancer"
-          />
-        </div>
-
-        <div className="field">
-          <label htmlFor="pronouns">Pronouns</label>
-          <input
-            id="pronouns"
-            type="text"
-            value={pronouns}
-            onChange={(e) => setPronouns(e.target.value)}
-            maxLength={32}
-            placeholder="they/them"
           />
         </div>
 

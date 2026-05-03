@@ -12,6 +12,18 @@ import { ResetPassword } from './components/ResetPassword'
 import { AccountSettings } from './components/AccountSettings'
 import { PublishArticle } from './components/PublishArticle'
 import { PublicProfile } from './components/PublicProfile'
+import { GamePage } from './components/GamePage'
+import {
+  About,
+  BugReports,
+  Careers,
+  Contact,
+  CookiePolicy,
+  HelpCenter,
+  PrivacyPolicy,
+  Status,
+  TermsOfService,
+} from './components/StaticPages'
 
 const router = createBrowserRouter([
   {
@@ -37,6 +49,16 @@ const router = createBrowserRouter([
           { path: '/account', element: <AccountSettings /> },
           { path: '/publish', element: <PublishArticle /> },
           { path: '/u/:userId', element: <PublicProfile /> },
+          { path: '/g/:gameId', element: <GamePage /> },
+          { path: '/about', element: <About /> },
+          { path: '/contact', element: <Contact /> },
+          { path: '/careers', element: <Careers /> },
+          { path: '/help', element: <HelpCenter /> },
+          { path: '/status', element: <Status /> },
+          { path: '/bugs', element: <BugReports /> },
+          { path: '/privacy', element: <PrivacyPolicy /> },
+          { path: '/terms', element: <TermsOfService /> },
+          { path: '/cookies', element: <CookiePolicy /> },
         ],
       },
       { path: '*', element: <Navigate to="/" replace /> },

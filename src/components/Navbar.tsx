@@ -1,7 +1,8 @@
-import { Link } from 'react-router-dom'
+import { Link, NavLink } from 'react-router-dom'
 import { User } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import { AccountProfile, isAdmin } from '../lib/profile'
+import bannerUrl from '../assets/img/necronet-banner.png'
 
 function displayNameFor(user: User, profile: AccountProfile | null): string {
   if (profile?.display_name) return profile.display_name
@@ -41,9 +42,19 @@ export function Navbar({
     <header className="navbar">
       <div className="navbar-inner">
         <div className="navbar-left">
-          <Link to="/" className="logo">
-            NECRO<span>NET</span>
+          <Link to="/" className="navbar-brand" aria-label="Necronet home">
+            <img src={bannerUrl} alt="Necronet" className="navbar-brand-img" />
           </Link>
+          <nav className="navbar-games" aria-label="Games">
+            <NavLink
+              to="/g/necro"
+              className={({ isActive }) =>
+                `navbar-game-link${isActive ? ' active' : ''}`
+              }
+            >
+              Necro
+            </NavLink>
+          </nav>
         </div>
 
         <div className="navbar-right">

@@ -11,6 +11,7 @@ export type AccountTier =
   | 'tester'
   | 'vip'
 export type UserRole = 'member' | 'moderator' | 'admin'
+export type AccountStatus = 'active' | 'suspended' | 'banned' | 'closed' | 'locked'
 
 export type AccountProfile = {
   id: string
@@ -51,9 +52,9 @@ export type AccountProfile = {
 
   // Role + moderation (read-only for users; admin-only writes)
   role: UserRole
-  is_banned: boolean
-  banned_until: string | null
-  banned_reason: string | null
+  status: AccountStatus
+  status_reason: string
+  suspended_until: string | null
 
   // Wallet
   platform_currency: number
@@ -96,9 +97,9 @@ const PROFILE_COLUMNS = [
   'online_visibility',
   'account_tier',
   'role',
-  'is_banned',
-  'banned_until',
-  'banned_reason',
+  'status',
+  'status_reason',
+  'suspended_until',
   'platform_currency',
   'created_at',
   'last_logged_in_at',
@@ -126,9 +127,9 @@ export async function updateProfile(
       | 'id'
       | 'account_tier'
       | 'role'
-      | 'is_banned'
-      | 'banned_until'
-      | 'banned_reason'
+      | 'status'
+      | 'status_reason'
+      | 'suspended_until'
       | 'platform_currency'
       | 'created_at'
       | 'last_logged_in_at'
@@ -155,8 +156,8 @@ export type PublicProfile = {
   region: Region | null
   account_tier: AccountTier
   role: UserRole
-  is_banned: boolean
-  banned_until: string | null
+  status: AccountStatus
+  suspended_until: string | null
   created_at: string
 }
 

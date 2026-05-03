@@ -4,19 +4,31 @@ import { Session } from '@supabase/supabase-js'
 import { Stage, useAuthStage } from '../hooks/useAuthStage'
 import { AccountProfile } from '../lib/profile'
 
+const PUBLIC_INFO_PATHS = [
+  '/about',
+  '/contact',
+  '/careers',
+  '/help',
+  '/status',
+  '/bugs',
+  '/privacy',
+  '/terms',
+  '/cookies',
+]
+
 const STAGE_ALLOWED_PATHS: Record<Exclude<Stage, 'loading'>, string[]> = {
-  login: ['/', '/play', '/social', '/login', '/register', '/forgot-password'],
+  login: ['/', '/play', '/social', '/login', '/register', '/forgot-password', ...PUBLIC_INFO_PATHS],
   enroll: ['/mfa-enroll'],
   challenge: ['/mfa'],
-  dashboard: ['/', '/play', '/social', '/account', '/publish'],
+  dashboard: ['/', '/play', '/social', '/account', '/publish', ...PUBLIC_INFO_PATHS],
   recovery: ['/reset-password'],
 }
 
 const STAGE_ALLOWED_PREFIXES: Record<Exclude<Stage, 'loading'>, string[]> = {
-  login: ['/u/'],
+  login: ['/u/', '/g/'],
   enroll: [],
   challenge: [],
-  dashboard: ['/u/'],
+  dashboard: ['/u/', '/g/'],
   recovery: [],
 }
 
