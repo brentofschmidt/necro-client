@@ -95,7 +95,9 @@ body {
 }
 
 .settings-tab {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   text-align: left;
   padding: 10px 14px;
@@ -109,6 +111,11 @@ body {
   font-weight: 500;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.settings-tab-icon {
+  flex-shrink: 0;
+  color: inherit;
 }
 
 .settings-tab:hover {
