@@ -111,6 +111,24 @@ export type ItemType = {
   equip_slot: string
 }
 
+export type RecipeIngredient = {
+  itemId: string
+  quantity: number
+}
+
+export type Recipe = {
+  id: string
+  display_name: string
+  description: string
+  skill: string
+  required_skill_level: number
+  xp_reward: number
+  craft_time_seconds: number
+  station_tag: string
+  ingredients: RecipeIngredient[]
+  outputs: RecipeIngredient[]
+}
+
 export type Item = {
   id: string
   item_name: string
@@ -126,6 +144,7 @@ export type Item = {
   weapon_max_damage: number | null
   weapon_speed: number | null
   ability_bonuses: AbilityBonus[]
+  is_craftable: boolean
 }
 
 export type ActionEffect = {
@@ -328,12 +347,33 @@ export async function listDamageTypes(): Promise<DamageType[]> {
   return (data as DamageType[] | null) ?? []
 }
 
+export async function listRecipes(): Promise<Recipe[]> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .from('recipes')
+    .select(
+      'id, display_name, description, skill, required_skill_level, xp_reward, craft_time_seconds, station_tag, ingredients, outputs',
+    )
+    .order('skill', { ascending: true })
+    .order('required_skill_level', { ascending: true })
+    .order('display_name', { ascending: true })
+  if (error) {
+    console.error('Failed to load recipes:', error.message)
+    return []
+  }
+  return ((data as Recipe[] | null) ?? []).map((r) => ({
+    ...r,
+    ingredients: Array.isArray(r.ingredients) ? r.ingredients : [],
+    outputs: Array.isArray(r.outputs) ? r.outputs : [],
+  }))
+}
+
 export async function listItems(): Promise<Item[]> {
   const { data, error } = await supabase
     .schema('necro_content')
     .from('items')
     .select(
-      'id, item_name, description, rarity, item_type, slot, required_skill_level, is_stackable, max_stack_size, weight, weapon_min_damage, weapon_max_damage, weapon_speed, ability_bonuses',
+      'id, item_name, description, rarity, item_type, slot, required_skill_level, is_stackable, max_stack_size, weight, weapon_min_damage, weapon_max_damage, weapon_speed, ability_bonuses, is_craftable',
     )
     .order('item_name', { ascending: true })
   if (error) {

@@ -110,15 +110,28 @@ body {
   display: grid;
   grid-template-columns: 220px 1fr;
   gap: 40px;
-  align-items: start;
+  align-items: stretch;
+  /* Pin to remaining viewport height so the two columns can scroll
+     independently. The 200px subtracts navbar + main padding + title
+     row — approximate but consistent. Scroll chaining still lets the
+     window scroll once a column hits its bottom (so the footer stays
+     reachable). */
+  height: calc(100dvh - 200px);
+  min-height: 320px;
 }
 
 .settings-tabs {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  position: sticky;
-  top: 80px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.settings-content {
+  min-width: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .settings-tab {
@@ -156,19 +169,23 @@ body {
   color: var(--text);
 }
 
-.settings-content {
-  min-width: 0;
-}
-
 @media (max-width: 720px) {
   .settings-layout {
     grid-template-columns: 1fr;
     gap: 24px;
+    /* Single-column on mobile — let everything scroll with the page */
+    height: auto;
+    min-height: 0;
   }
   .settings-tabs {
-    position: static;
     flex-direction: row;
     flex-wrap: wrap;
+    overflow-y: visible;
+    padding-right: 0;
+  }
+  .settings-content {
+    overflow-y: visible;
+    padding-right: 0;
   }
   .settings-tab {
     border-left: none;

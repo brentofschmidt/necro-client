@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useState } from 'react'
+import { ReactNode, useEffect, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { fetchGameById, Game, GameStatus } from '../lib/games'
 import {
@@ -21,6 +21,7 @@ import {
   listRaces,
   listRarities,
   listRealms,
+  listRecipes,
   listResources,
   listSkills,
   listSpells,
@@ -31,6 +32,7 @@ import {
   Rarity,
   Realm,
   RealmStats,
+  Recipe,
   Resource,
   Skill,
   SkillCategory,
@@ -46,6 +48,7 @@ type TabId =
   | 'items'
   | 'item_types'
   | 'rarities'
+  | 'recipes'
   | 'abilities'
   | 'resources'
   | 'stats'
@@ -67,6 +70,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'items', label: 'Items' },
   { id: 'item_types', label: 'Item Types' },
   { id: 'rarities', label: 'Rarities' },
+  { id: 'recipes', label: 'Recipes' },
   { id: 'abilities', label: 'Abilities' },
   { id: 'resources', label: 'Resources' },
   { id: 'stats', label: 'Stats' },
@@ -142,6 +146,14 @@ const TAB_ICONS: Record<TabId, ReactNode> = {
   rarities: (
     <TabIcon>
       <path d="M12 2l3 6 6 1-4.5 4.5L18 20l-6-3-6 3 1.5-6.5L3 9l6-1z" />
+    </TabIcon>
+  ),
+  recipes: (
+    <TabIcon>
+      <path d="M6 3h11l3 3v15H6z" />
+      <path d="M9 8h8" />
+      <path d="M9 12h8" />
+      <path d="M9 16h5" />
     </TabIcon>
   ),
   abilities: (
@@ -261,9 +273,12 @@ export function GamePage() {
 
   const queryTab = searchParams.get('tab')
   const activeTab: TabId = isTabId(queryTab) ? queryTab : DEFAULT_TAB
+  const contentRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    window.scrollTo(0, 0)
+    // Reset only the right column's scroll. The left tab list scrolls
+    // independently and the page itself doesn't scroll on these tabs.
+    contentRef.current?.scrollTo(0, 0)
   }, [activeTab])
 
   useEffect(() => {
@@ -327,6 +342,9 @@ export function GamePage() {
       break
     case 'rarities':
       content = <RaritiesSection />
+      break
+    case 'recipes':
+      content = <RecipesSection />
       break
     case 'abilities':
       content = <AbilitiesSection />
@@ -400,7 +418,9 @@ export function GamePage() {
             </button>
           ))}
         </nav>
-        <div className="settings-content">{content}</div>
+        <div className="settings-content" ref={contentRef}>
+          {content}
+        </div>
       </div>
     </div>
   )
@@ -809,6 +829,29 @@ const SKILL_ICONS: Record<string, ReactNode> = {
       <path d="M7 9h10l1 2v8a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-8z" />
       <path d="M9 9c0-2 1-3 3-3s3 1 3 3" />
       <circle cx="12" cy="14" r="1.5" fill="currentColor" stroke="none" />
+    </>
+  ),
+  smithing: (
+    <>
+      <path d="M3 17h6v3H3z" />
+      <path d="M9 14l4-4 5 5-4 4z" />
+      <path d="M13 10l3-3" />
+      <path d="M16 7l2-2 3 3-2 2z" />
+    </>
+  ),
+  fletching: (
+    <>
+      <path d="M3 21L21 3" />
+      <path d="M21 3v6" />
+      <path d="M21 3h-6" />
+      <path d="M5 19l-2 2 4-1" />
+    </>
+  ),
+  carpentry: (
+    <>
+      <path d="M4 8l9-4 7 4-9 4z" />
+      <path d="M4 8v6l9 4" />
+      <path d="M20 8v6l-7 4" />
     </>
   ),
 }
@@ -1643,6 +1686,138 @@ function ItemTypesSection() {
   )
 }
 
+function formatStation(tag: string): string {
+  return tag
+    .split('_')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
+}
+
+function RecipesSection() {
+  const recipes = useAsyncList<Recipe>(() => listRecipes())
+  const items = useAsyncList<Item>(() => listItems())
+  const [query, setQuery] = useState('')
+
+  const itemNameById = new Map((items ?? []).map((i) => [i.id, i.item_name]))
+
+  const filtered =
+    recipes?.filter((r) => {
+      if (!query) return true
+      const haystack = `${r.display_name} ${r.id} ${r.description} ${r.skill}`.toLowerCase()
+      return haystack.includes(query.toLowerCase())
+    }) ?? null
+
+  const skillsInOrder = Array.from(new Set((filtered ?? []).map((r) => r.skill))).sort()
+
+  return (
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Recipes</h2>
+        <p>
+          Crafting blueprints that turn ingredients into finished items at a station.
+          Grouped by the skill they train.
+        </p>
+      </header>
+
+      <input
+        type="search"
+        className="content-search"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search recipes…"
+        aria-label="Search recipes"
+      />
+
+      {filtered === null ? (
+        <p className="text-dim">Loading…</p>
+      ) : filtered.length === 0 ? (
+        <p className="text-dim">
+          {query ? `No recipes match "${query}".` : 'No recipes defined yet.'}
+        </p>
+      ) : (
+        <>
+          {skillsInOrder.map((skill) => {
+            const group = filtered.filter((r) => r.skill === skill)
+            if (group.length === 0) return null
+            return (
+              <div key={skill} className="content-subgroup">
+                <h3 className="content-subgroup-heading">{formatStation(skill)}</h3>
+                <div className="content-card-grid">
+                  {group.map((r) => (
+                    <RecipeCard key={r.id} recipe={r} itemNameById={itemNameById} />
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+        </>
+      )}
+    </section>
+  )
+}
+
+function RecipeCard({
+  recipe,
+  itemNameById,
+}: {
+  recipe: Recipe
+  itemNameById: Map<string, string>
+}) {
+  const nameOf = (id: string) => itemNameById.get(id) ?? id
+  return (
+    <article className="content-card">
+      <header className="content-card-header">
+        <h3 className="content-card-title">{recipe.display_name}</h3>
+        <span className="content-card-id">{recipe.id}</span>
+      </header>
+      {recipe.description && <p className="content-card-body">{recipe.description}</p>}
+
+      <div className="content-card-stats">
+        <span className="stat-pill stat-pill-muted">
+          Lv {recipe.required_skill_level}
+        </span>
+        <span className="stat-pill stat-pill-muted">
+          {formatStation(recipe.station_tag)}
+        </span>
+        <span className="stat-pill stat-pill-muted">
+          {recipe.craft_time_seconds % 1 === 0
+            ? `${recipe.craft_time_seconds.toFixed(0)}s`
+            : `${recipe.craft_time_seconds.toFixed(1)}s`}
+        </span>
+        {recipe.xp_reward > 0 && (
+          <span className="stat-pill">+{recipe.xp_reward} XP</span>
+        )}
+      </div>
+
+      {recipe.ingredients.length > 0 && (
+        <div className="content-card-bonus-group">
+          <div className="content-card-bonus-heading">Ingredients</div>
+          <ul className="content-card-bonuses">
+            {recipe.ingredients.map((ing, i) => (
+              <li key={i}>
+                {ing.quantity}× {nameOf(ing.itemId)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {recipe.outputs.length > 0 && (
+        <div className="content-card-bonus-group">
+          <div className="content-card-bonus-heading">Produces</div>
+          <ul className="content-card-bonuses">
+            {recipe.outputs.map((out, i) => (
+              <li key={i} className="content-card-bonus-positive">
+                {out.quantity}× {nameOf(out.itemId)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </article>
+  )
+}
+
 function RaritiesSection() {
   const rarities = useAsyncList<Rarity>(() => listRarities())
   return (
@@ -1834,6 +2009,15 @@ function ItemGroup({
                     }}
                   >
                     {rarity.display_name}
+                  </span>
+                )}
+                {i.is_craftable && (
+                  <span className="tag" style={{
+                    color: '#78dc8c',
+                    borderColor: 'rgba(120, 220, 140, 0.3)',
+                    background: 'rgba(120, 220, 140, 0.10)',
+                  }}>
+                    Craftable
                   </span>
                 )}
               </div>

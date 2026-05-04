@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useState } from 'react'
+import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react'
 import { User } from '@supabase/supabase-js'
 import { useOutletContext, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
@@ -127,9 +127,10 @@ export function AccountSettings() {
 
   const queryTab = searchParams.get('tab')
   const activeTab: TabId = isTabId(queryTab) ? queryTab : DEFAULT_TAB
+  const contentRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    window.scrollTo(0, 0)
+    contentRef.current?.scrollTo(0, 0)
   }, [activeTab])
 
   function setTab(id: TabId) {
@@ -193,7 +194,9 @@ export function AccountSettings() {
             </button>
           ))}
         </nav>
-        <div className="settings-content">{content}</div>
+        <div className="settings-content" ref={contentRef}>
+          {content}
+        </div>
       </div>
     </div>
   )
