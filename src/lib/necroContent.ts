@@ -92,6 +92,42 @@ export type DamageType = {
   resistance_stat: string
 }
 
+export type Rarity = {
+  id: string
+  display_name: string
+  description: string
+  display_color: string
+  sort_order: number
+  show_ground_glow: boolean
+  ground_glow_brightness: number
+  ground_glow_scale: number
+}
+
+export type ItemType = {
+  name: string
+  group: string
+  display_name: string
+  stackable: boolean
+  equip_slot: string
+}
+
+export type Item = {
+  id: string
+  item_name: string
+  description: string
+  rarity: string
+  item_type: string
+  slot: string
+  required_skill_level: number
+  is_stackable: boolean
+  max_stack_size: number
+  weight: number
+  weapon_min_damage: number | null
+  weapon_max_damage: number | null
+  weapon_speed: number | null
+  ability_bonuses: AbilityBonus[]
+}
+
 export type ActionEffect = {
   type: string
   description: string
@@ -290,6 +326,52 @@ export async function listDamageTypes(): Promise<DamageType[]> {
     return []
   }
   return (data as DamageType[] | null) ?? []
+}
+
+export async function listItems(): Promise<Item[]> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .from('items')
+    .select(
+      'id, item_name, description, rarity, item_type, slot, required_skill_level, is_stackable, max_stack_size, weight, weapon_min_damage, weapon_max_damage, weapon_speed, ability_bonuses',
+    )
+    .order('item_name', { ascending: true })
+  if (error) {
+    console.error('Failed to load items:', error.message)
+    return []
+  }
+  return ((data as Item[] | null) ?? []).map((i) => ({
+    ...i,
+    ability_bonuses: Array.isArray(i.ability_bonuses) ? i.ability_bonuses : [],
+  }))
+}
+
+export async function listRarities(): Promise<Rarity[]> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .from('rarities')
+    .select(
+      'id, display_name, description, display_color, sort_order, show_ground_glow, ground_glow_brightness, ground_glow_scale',
+    )
+    .order('sort_order', { ascending: true })
+  if (error) {
+    console.error('Failed to load rarities:', error.message)
+    return []
+  }
+  return (data as Rarity[] | null) ?? []
+}
+
+export async function listItemTypes(): Promise<ItemType[]> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .from('item_types')
+    .select('name, group, display_name, stackable, equip_slot')
+    .order('display_name', { ascending: true })
+  if (error) {
+    console.error('Failed to load item types:', error.message)
+    return []
+  }
+  return (data as ItemType[] | null) ?? []
 }
 
 const ACTION_COLUMNS =

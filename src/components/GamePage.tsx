@@ -8,13 +8,18 @@ import {
   DamageType,
   Faction,
   getRealmStats,
+  Item,
+  ItemType,
   listAbilities,
   listActions,
   listAlignments,
   listDamageTypes,
   listFactions,
+  listItems,
+  listItemTypes,
   listPublicCharacters,
   listRaces,
+  listRarities,
   listRealms,
   listResources,
   listSkills,
@@ -23,6 +28,7 @@ import {
   listZones,
   PublicCharacter,
   Race,
+  Rarity,
   Realm,
   RealmStats,
   Resource,
@@ -38,6 +44,7 @@ type TabId =
   | 'information'
   | 'characters'
   | 'items'
+  | 'rarities'
   | 'abilities'
   | 'resources'
   | 'stats'
@@ -57,6 +64,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'information', label: 'Game Information' },
   { id: 'characters', label: 'Characters' },
   { id: 'items', label: 'Items' },
+  { id: 'rarities', label: 'Rarities' },
   { id: 'abilities', label: 'Abilities' },
   { id: 'resources', label: 'Resources' },
   { id: 'stats', label: 'Stats' },
@@ -119,6 +127,11 @@ const TAB_ICONS: Record<TabId, ReactNode> = {
       <path d="M3 7l9-4 9 4-9 4-9-4z" />
       <path d="M3 12l9 4 9-4" />
       <path d="M3 17l9 4 9-4" />
+    </TabIcon>
+  ),
+  rarities: (
+    <TabIcon>
+      <path d="M12 2l3 6 6 1-4.5 4.5L18 20l-6-3-6 3 1.5-6.5L3 9l6-1z" />
     </TabIcon>
   ),
   abilities: (
@@ -297,12 +310,10 @@ export function GamePage() {
       content = <CharactersSection />
       break
     case 'items':
-      content = (
-        <ComingSoonSection
-          title="Items"
-          description="Browse and search every item in the game — weapons, armor, consumables, and more."
-        />
-      )
+      content = <ItemsSection />
+      break
+    case 'rarities':
+      content = <RaritiesSection />
       break
     case 'abilities':
       content = <AbilitiesSection />
@@ -1480,6 +1491,259 @@ function ActiveEffectCard({
         {isHeal && <span className="tag">Heal</span>}
       </div>
     </article>
+  )
+}
+
+const ITEM_GROUP_ICONS: Record<string, ReactNode> = {
+  Weapon: (
+    <>
+      <path d="M5 19L19 5" />
+      <path d="M16 5h4v4" />
+      <path d="M3 21l4-4" />
+    </>
+  ),
+  Armor: (
+    <>
+      <path d="M12 3l8 3v6c0 5-4 8-8 9-4-1-8-4-8-9V6z" />
+    </>
+  ),
+  Tool: (
+    <>
+      <path d="M14 4l6 6-3 3-6-6z" />
+      <path d="M11 7L4 14l3 3 7-7" />
+      <path d="M4 14l-1 4 4-1" />
+    </>
+  ),
+  Currency: (
+    <>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M9 10c0-1.5 1.3-2 3-2s3 .5 3 2-1 1.8-3 2-3 .5-3 2 1.3 2 3 2 3-.5 3-2" />
+      <path d="M12 5v2" />
+      <path d="M12 17v2" />
+    </>
+  ),
+}
+
+const ITEM_GROUP_ORDER = ['Weapon', 'Armor', 'Tool', 'Currency']
+
+function ItemGroupIcon({ group }: { group: string }) {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="item-icon"
+      aria-hidden="true"
+    >
+      {ITEM_GROUP_ICONS[group] ?? <circle cx="12" cy="12" r="6" />}
+    </svg>
+  )
+}
+
+function RaritiesSection() {
+  const rarities = useAsyncList<Rarity>(() => listRarities())
+  return (
+    <ContentSection
+      title="Rarities"
+      description="The tier ladder loot is colored by. Higher tiers carry more bonuses, glow brighter on the ground, and show up much less often."
+      items={rarities}
+      emptyText="No rarities defined yet."
+    >
+      {rarities?.map((r) => (
+        <article key={r.id} className="content-card">
+          <header className="content-card-header">
+            <h3
+              className="content-card-title"
+              style={{ color: r.display_color }}
+            >
+              <span
+                className="rarity-swatch"
+                style={{ background: r.display_color }}
+                aria-hidden="true"
+              />
+              {r.display_name}
+            </h3>
+            <span className="content-card-id">{r.id}</span>
+          </header>
+          {r.description && <p className="content-card-body">{r.description}</p>}
+          <div className="content-card-meta">
+            <span className="tag-muted">{r.display_color.toUpperCase()}</span>
+            {r.show_ground_glow ? (
+              <span
+                className="tag"
+                style={{
+                  color: r.display_color,
+                  borderColor: r.display_color + '55',
+                  background: r.display_color + '14',
+                }}
+              >
+                Glow ×{r.ground_glow_brightness}
+              </span>
+            ) : (
+              <span className="tag-muted">No ground glow</span>
+            )}
+          </div>
+        </article>
+      ))}
+    </ContentSection>
+  )
+}
+
+function ItemsSection() {
+  const items = useAsyncList<Item>(() => listItems())
+  const rarities = useAsyncList<Rarity>(() => listRarities())
+  const itemTypes = useAsyncList<ItemType>(() => listItemTypes())
+  const [query, setQuery] = useState('')
+
+  const rarityById = new Map((rarities ?? []).map((r) => [r.id, r]))
+  const typeById = new Map((itemTypes ?? []).map((t) => [t.name, t]))
+
+  const filtered =
+    items?.filter((i) => {
+      if (!query) return true
+      const haystack = `${i.item_name} ${i.id} ${i.description}`.toLowerCase()
+      return haystack.includes(query.toLowerCase())
+    }) ?? null
+
+  return (
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Items</h2>
+        <p>
+          Equipment, tools, currency, and other things you can carry. Color-coded by
+          rarity (white → orange).
+        </p>
+      </header>
+
+      <input
+        type="search"
+        className="content-search"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search items…"
+        aria-label="Search items"
+      />
+
+      {filtered === null ? (
+        <p className="text-dim">Loading…</p>
+      ) : filtered.length === 0 ? (
+        <p className="text-dim">
+          {query ? `No items match "${query}".` : 'No items defined yet.'}
+        </p>
+      ) : (
+        <>
+          {ITEM_GROUP_ORDER.map((group) => {
+            const groupItems = filtered.filter(
+              (i) => typeById.get(i.item_type)?.group === group,
+            )
+            if (groupItems.length === 0) return null
+            return (
+              <ItemGroup
+                key={group}
+                group={group}
+                items={groupItems}
+                rarityById={rarityById}
+                typeById={typeById}
+              />
+            )
+          })}
+        </>
+      )}
+    </section>
+  )
+}
+
+function ItemGroup({
+  group,
+  items,
+  rarityById,
+  typeById,
+}: {
+  group: string
+  items: Item[]
+  rarityById: Map<string, Rarity>
+  typeById: Map<string, ItemType>
+}) {
+  return (
+    <div className="content-subgroup">
+      <h3 className="content-subgroup-heading">{group}</h3>
+      <div className="content-card-grid">
+        {items.map((i) => {
+          const rarity = rarityById.get(i.rarity)
+          const type = typeById.get(i.item_type)
+          const isWeapon = i.weapon_min_damage != null
+          return (
+            <article key={i.id} className="content-card">
+              <header className="content-card-header">
+                <h3
+                  className="content-card-title"
+                  style={{ color: rarity?.display_color ?? 'inherit' }}
+                >
+                  <ItemGroupIcon group={group} />
+                  {i.item_name}
+                </h3>
+                <span className="content-card-id">{i.id}</span>
+              </header>
+              {i.description && <p className="content-card-body">{i.description}</p>}
+              {i.ability_bonuses.length > 0 && (
+                <BonusList title="Bonuses" entries={i.ability_bonuses} />
+              )}
+
+              <div className="content-card-stats">
+                {isWeapon && (
+                  <span className="stat-pill">
+                    {i.weapon_min_damage}–{i.weapon_max_damage} dmg
+                  </span>
+                )}
+                {isWeapon && i.weapon_speed != null && (
+                  <span className="stat-pill stat-pill-muted">
+                    Spd {i.weapon_speed}s
+                  </span>
+                )}
+                {i.weight > 0 && (
+                  <span className="stat-pill stat-pill-muted">
+                    Wt {i.weight}
+                  </span>
+                )}
+                {i.is_stackable && i.max_stack_size > 1 && (
+                  <span className="stat-pill stat-pill-muted">
+                    Stack {i.max_stack_size.toLocaleString()}
+                  </span>
+                )}
+                {i.required_skill_level > 0 && (
+                  <span className="stat-pill stat-pill-muted">
+                    Lv {i.required_skill_level}
+                  </span>
+                )}
+              </div>
+
+              <div className="content-card-meta">
+                {type && <span className="tag-muted">{type.display_name}</span>}
+                {i.slot && i.slot !== 'InventoryOnly' && (
+                  <span className="tag-muted">{i.slot}</span>
+                )}
+                {rarity && (
+                  <span
+                    className="tag-muted"
+                    style={{
+                      color: rarity.display_color,
+                      borderColor: rarity.display_color + '55',
+                    }}
+                  >
+                    {rarity.display_name}
+                  </span>
+                )}
+              </div>
+            </article>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 

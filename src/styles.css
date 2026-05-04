@@ -1235,10 +1235,27 @@ body {
 .alignment-icon,
 .ability-icon,
 .resource-icon,
-.stat-icon {
+.stat-icon,
+.item-icon {
   display: inline-block;
   vertical-align: middle;
   margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.item-icon {
+  color: var(--text-dim);
+}
+
+.rarity-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 8px;
+  border-radius: 2px;
+  vertical-align: middle;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 0 8px currentColor;
   flex-shrink: 0;
 }
 
