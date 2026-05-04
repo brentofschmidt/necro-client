@@ -128,6 +128,10 @@ export function AccountSettings() {
   const queryTab = searchParams.get('tab')
   const activeTab: TabId = isTabId(queryTab) ? queryTab : DEFAULT_TAB
 
+  useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [activeTab])
+
   function setTab(id: TabId) {
     setSearchParams({ tab: id }, { replace: true })
   }

@@ -227,6 +227,10 @@ export function GamePage() {
   const activeTab: TabId = isTabId(queryTab) ? queryTab : DEFAULT_TAB
 
   useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [activeTab])
+
+  useEffect(() => {
     if (!gameId) {
       setLoadState('not-found')
       return
@@ -752,6 +756,21 @@ const SKILL_ICONS: Record<string, ReactNode> = {
       <path d="M9 3v6l-4 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-4-9V3" />
       <path d="M8 3h8" />
       <path d="M7 14h10" />
+    </>
+  ),
+  lockpicking: (
+    <>
+      <circle cx="6" cy="6" r="3" />
+      <path d="M8 8l11 11" />
+      <path d="M14 14l3-3" />
+      <path d="M17 17l3-3" />
+    </>
+  ),
+  pickpocketing: (
+    <>
+      <path d="M7 9h10l1 2v8a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-8z" />
+      <path d="M9 9c0-2 1-3 3-3s3 1 3 3" />
+      <circle cx="12" cy="14" r="1.5" fill="currentColor" stroke="none" />
     </>
   ),
 }
