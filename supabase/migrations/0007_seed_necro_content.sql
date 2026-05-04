@@ -23,22 +23,25 @@ on conflict (id) do update set
 
 
 -- ── Factions ─────────────────────────────────────────────────────────────────
--- Placeholder good / neutral / evil triad. Replace with the real faction
--- roster once authoring lands; relationships go in necro_content.faction_hostility.
-insert into necro_content.factions (id, display_name, description, is_player_faction) values
-    ('good',    'Good',    'Defenders of the realm and the common folk.',           true),
-    ('neutral', 'Neutral', 'Independents, traders, and those who answer to none.',  true),
-    ('evil',    'Evil',    'Forces opposed to the living realms.',                  true)
+-- Initial faction. The good/neutral/evil triad that lived here in earlier
+-- revisions moved to necro_content.alignments in migration 0017.
+insert into necro_content.factions (id, display_name, description, is_player_faction, starting_standing) values
+    ('carrion_pact',
+     'The Carrion Pact',
+     'A secretive league that profits from the dying world — grave robbers, mercenary embalmers, and worse. They claim no banner and own no city, yet their mark is found on every battlefield by morning.',
+     true,
+     'Neutral')
 on conflict (id) do update set
     display_name      = excluded.display_name,
     description       = excluded.description,
-    is_player_faction = excluded.is_player_faction;
+    is_player_faction = excluded.is_player_faction,
+    starting_standing = excluded.starting_standing;
 
 
 -- ── Zones ────────────────────────────────────────────────────────────────────
--- Starting zone for new characters. Forested, low-level, aligned with the
--- 'good' faction. is_starting_zone = true so character creation can pick it
--- up automatically.
+-- Starting zone for new characters. Forested, low-level, no controlling
+-- faction (wilderness). is_starting_zone = true so character creation can
+-- pick it up automatically.
 insert into necro_content.zones (
     id,
     display_name,
@@ -53,7 +56,7 @@ insert into necro_content.zones (
     'A misted forest of hollow oaks and slow black water. Wandering wolves and old wards keep the worst of the wood at bay — for now. New arrivals begin their journey here.',
     1,
     5,
-    'good',
+    null,
     true
 )
 on conflict (id) do update set

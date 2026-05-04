@@ -2,11 +2,31 @@ import { ReactNode, useEffect, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { fetchGameById, Game, GameStatus } from '../lib/games'
 import {
+  Ability,
+  Alignment,
+  DamageType,
   Faction,
+  getRealmStats,
+  listAbilities,
+  listAlignments,
+  listDamageTypes,
   listFactions,
+  listPublicCharacters,
   listRaces,
+  listRealms,
+  listResources,
+  listSkills,
+  listStats,
   listZones,
+  PublicCharacter,
   Race,
+  Realm,
+  RealmStats,
+  Resource,
+  Skill,
+  SkillCategory,
+  Stat,
+  StatCategory,
   Zone,
 } from '../lib/necroContent'
 
@@ -15,10 +35,16 @@ type TabId =
   | 'characters'
   | 'items'
   | 'abilities'
+  | 'resources'
+  | 'stats'
+  | 'actions'
+  | 'damage_types'
   | 'skills'
   | 'races'
+  | 'alignments'
   | 'factions'
   | 'zones'
+  | 'realms'
   | 'leaderboards'
   | 'guilds'
 
@@ -27,10 +53,16 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'characters', label: 'Characters' },
   { id: 'items', label: 'Items' },
   { id: 'abilities', label: 'Abilities' },
+  { id: 'resources', label: 'Resources' },
+  { id: 'stats', label: 'Stats' },
+  { id: 'actions', label: 'Actions' },
+  { id: 'damage_types', label: 'Damage Types' },
   { id: 'skills', label: 'Skills' },
   { id: 'races', label: 'Races' },
+  { id: 'alignments', label: 'Alignments' },
   { id: 'factions', label: 'Factions' },
   { id: 'zones', label: 'Zones' },
+  { id: 'realms', label: 'Realms' },
   { id: 'leaderboards', label: 'Leaderboards' },
   { id: 'guilds', label: 'Guilds' },
 ]
@@ -85,7 +117,31 @@ const TAB_ICONS: Record<TabId, ReactNode> = {
   ),
   abilities: (
     <TabIcon>
+      <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" />
+      <path d="M12 8v8" />
+      <path d="M8 10l8 4" />
+      <path d="M16 10l-8 4" />
+    </TabIcon>
+  ),
+  resources: (
+    <TabIcon>
+      <path d="M3 12h4l2-5 4 10 2-5h6" />
+    </TabIcon>
+  ),
+  stats: (
+    <TabIcon>
+      <path d="M3 17l5-6 4 3 5-7 4 6" />
+      <path d="M3 21h18" />
+    </TabIcon>
+  ),
+  actions: (
+    <TabIcon>
       <path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z" />
+    </TabIcon>
+  ),
+  damage_types: (
+    <TabIcon>
+      <path d="M12 3l2.5 5.5L20 10l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-1.5L12 3z" />
     </TabIcon>
   ),
   skills: (
@@ -101,6 +157,14 @@ const TAB_ICONS: Record<TabId, ReactNode> = {
       <path d="M12 3l3 5h-2v6l4 5h-10l4-5V8h-2l3-5z" />
     </TabIcon>
   ),
+  alignments: (
+    <TabIcon>
+      <path d="M12 3v18" />
+      <path d="M5 7h14" />
+      <path d="M5 7l-3 5h6z" />
+      <path d="M19 7l-3 5h6z" />
+    </TabIcon>
+  ),
   factions: (
     <TabIcon>
       <path d="M6 3v18" />
@@ -112,6 +176,15 @@ const TAB_ICONS: Record<TabId, ReactNode> = {
       <path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2V6z" />
       <path d="M9 4v16" />
       <path d="M15 6v16" />
+    </TabIcon>
+  ),
+  realms: (
+    <TabIcon>
+      <rect x="3" y="4" width="18" height="5" rx="1" />
+      <rect x="3" y="11" width="18" height="5" rx="1" />
+      <rect x="3" y="18" width="18" height="3" rx="1" />
+      <circle cx="7" cy="6.5" r="0.5" />
+      <circle cx="7" cy="13.5" r="0.5" />
     </TabIcon>
   ),
   leaderboards: (
@@ -204,12 +277,7 @@ export function GamePage() {
       content = <InformationSection game={game} />
       break
     case 'characters':
-      content = (
-        <ComingSoonSection
-          title="Characters"
-          description="A directory of player characters in Necro — class, level, realm, and last seen."
-        />
-      )
+      content = <CharactersSection />
       break
     case 'items':
       content = (
@@ -220,29 +288,42 @@ export function GamePage() {
       )
       break
     case 'abilities':
+      content = <AbilitiesSection />
+      break
+    case 'resources':
+      content = <ResourcesSection />
+      break
+    case 'stats':
+      content = <StatsSection />
+      break
+    case 'actions':
       content = (
         <ComingSoonSection
-          title="Abilities"
-          description="Class abilities, auras, and triggered effects pulled from necro_content.abilities."
+          title="Actions"
+          description="Active things characters do — spells, weapon strikes, utility moves. Pulled from necro_content.actions."
         />
       )
       break
+    case 'damage_types':
+      content = <DamageTypesSection />
+      break
     case 'skills':
-      content = (
-        <ComingSoonSection
-          title="Skills"
-          description="Player skills and proficiencies — what characters train and improve over time."
-        />
-      )
+      content = <SkillsSection />
       break
     case 'races':
       content = <RacesSection />
+      break
+    case 'alignments':
+      content = <AlignmentsSection />
       break
     case 'factions':
       content = <FactionsSection />
       break
     case 'zones':
       content = <ZonesSection />
+      break
+    case 'realms':
+      content = <RealmsSection />
       break
     case 'leaderboards':
       content = (
@@ -390,6 +471,474 @@ function ContentSection({
   )
 }
 
+const DAMAGE_TYPE_ICONS: Record<string, ReactNode> = {
+  bludgeoning: (
+    <>
+      <rect x="13" y="3" width="8" height="5" rx="1" />
+      <path d="M14 8l-9 9" />
+      <path d="M3 19l3 3" />
+    </>
+  ),
+  piercing: (
+    <>
+      <path d="M4 20L20 4" />
+      <path d="M14 4h6v6" />
+      <path d="M3 17l4 4" />
+    </>
+  ),
+  slashing: (
+    <>
+      <path d="M5 19L19 5" />
+      <path d="M16 5h4v4" />
+      <path d="M3 21l4-4" />
+    </>
+  ),
+  acid: (
+    <>
+      <path d="M12 3c-3 5-6 8-6 12a6 6 0 0 0 12 0c0-4-3-7-6-12z" />
+      <path d="M9 16a3 3 0 0 0 3 3" />
+    </>
+  ),
+  cold: (
+    <>
+      <path d="M12 2v20" />
+      <path d="M2 12h20" />
+      <path d="M5 5l14 14" />
+      <path d="M19 5L5 19" />
+      <path d="M9 4l3 2 3-2" />
+      <path d="M9 20l3-2 3 2" />
+    </>
+  ),
+  fire: (
+    <>
+      <path d="M12 3c-2 4-5 6-5 10a5 5 0 0 0 10 0c0-2-1-3-2-5 0 2-1 3-3 3 1-3 1-5 0-8z" />
+    </>
+  ),
+  lightning: (
+    <>
+      <path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z" />
+    </>
+  ),
+  thunder: (
+    <>
+      <path d="M5 13a4 4 0 0 1 4-4 5 5 0 0 1 9 1 3 3 0 0 1 0 6H8" />
+      <path d="M12 18l3-4h-2l1-3" />
+    </>
+  ),
+  force: (
+    <>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 2v4" />
+      <path d="M12 18v4" />
+      <path d="M2 12h4" />
+      <path d="M18 12h4" />
+      <path d="M5 5l3 3" />
+      <path d="M16 16l3 3" />
+      <path d="M19 5l-3 3" />
+      <path d="M8 16l-3 3" />
+    </>
+  ),
+  necrotic: (
+    <>
+      <path d="M12 3a7 7 0 0 0-7 7v3l2 2v3h10v-3l2-2v-3a7 7 0 0 0-7-7z" />
+      <circle cx="9" cy="11" r="1" fill="currentColor" />
+      <circle cx="15" cy="11" r="1" fill="currentColor" />
+      <path d="M10 16h4" />
+    </>
+  ),
+  poison: (
+    <>
+      <path d="M9 2h6v4l3 5v7a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3v-7l3-5z" />
+      <path d="M6 13h12" />
+      <circle cx="11" cy="17" r="0.8" fill="currentColor" />
+      <circle cx="14" cy="15" r="0.6" fill="currentColor" />
+    </>
+  ),
+  psychic: (
+    <>
+      <path d="M12 4a4 4 0 0 0-4 4c0 1.5.8 2.7 2 3.5C8.8 12 8 13.2 8 15a4 4 0 0 0 8 0c0-1.8-.8-3-2-3.5 1.2-.8 2-2 2-3.5a4 4 0 0 0-4-4z" />
+      <path d="M12 8v8" />
+    </>
+  ),
+  radiant: (
+    <>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v3" />
+      <path d="M12 19v3" />
+      <path d="M2 12h3" />
+      <path d="M19 12h3" />
+      <path d="M5 5l2 2" />
+      <path d="M17 17l2 2" />
+      <path d="M19 5l-2 2" />
+      <path d="M7 17l-2 2" />
+    </>
+  ),
+}
+
+function DamageTypeIcon({ id, color }: { id: string; color: string }) {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="damage-icon"
+      style={{ color }}
+      aria-hidden="true"
+    >
+      {DAMAGE_TYPE_ICONS[id] ?? <circle cx="12" cy="12" r="6" />}
+    </svg>
+  )
+}
+
+function DamageTypesSection() {
+  const types = useAsyncList<DamageType>(() => listDamageTypes())
+  const physical = types?.filter((t) => t.is_physical) ?? []
+  const magical = types?.filter((t) => !t.is_physical) ?? []
+
+  return (
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Damage Types</h2>
+        <p>
+          Damage classifications used by abilities, weapons, and resistances.
+          Physical types map to weapon damage; magical covers elemental and arcane.
+        </p>
+      </header>
+
+      {types === null ? (
+        <p className="text-dim">Loading…</p>
+      ) : types.length === 0 ? (
+        <p className="text-dim">No damage types defined yet.</p>
+      ) : (
+        <>
+          {physical.length > 0 && (
+            <DamageTypeGroup title="Physical" types={physical} />
+          )}
+          {magical.length > 0 && (
+            <DamageTypeGroup title="Magical" types={magical} />
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
+function DamageTypeGroup({ title, types }: { title: string; types: DamageType[] }) {
+  return (
+    <div className="content-subgroup">
+      <h3 className="content-subgroup-heading">{title}</h3>
+      <div className="content-card-grid">
+        {types.map((dt) => (
+          <article key={dt.id} className="content-card">
+            <header className="content-card-header">
+              <h3 className="content-card-title">
+                <DamageTypeIcon id={dt.id} color={dt.display_color} />
+                {dt.display_name}
+              </h3>
+              <span className="content-card-id">{dt.id}</span>
+            </header>
+            {dt.description && <p className="content-card-body">{dt.description}</p>}
+          </article>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+const SKILL_ICONS: Record<string, ReactNode> = {
+  // Weapon proficiencies
+  swords: (
+    <>
+      <path d="M14 4h6v6" />
+      <path d="M20 4L9 15" />
+      <path d="M9 15l-2 2 3 3 2-2" />
+      <path d="M5 19l2 2" />
+    </>
+  ),
+  axes: (
+    <>
+      <path d="M4 5c4-2 8-2 10 2-4 2-8 2-10-2z" />
+      <path d="M11 9l9 11" />
+      <path d="M3 21l3-3" />
+    </>
+  ),
+  maces: (
+    <>
+      <circle cx="7" cy="7" r="4" />
+      <path d="M3 7h1" />
+      <path d="M10 7h1" />
+      <path d="M7 3v1" />
+      <path d="M7 10v1" />
+      <path d="M10 10l10 10" />
+      <path d="M3 21l3-3" />
+    </>
+  ),
+  daggers: (
+    <>
+      <path d="M14 4h5v5" />
+      <path d="M19 4L9 14" />
+      <path d="M9 14l-2 2 3 3 2-2" />
+    </>
+  ),
+  bows: (
+    <>
+      <path d="M5 3c8 4 8 14 0 18" />
+      <path d="M5 3v18" />
+      <path d="M5 12h14" />
+      <path d="M17 10l2 2-2 2" />
+    </>
+  ),
+  staves: (
+    <>
+      <path d="M6 2l3 5-3 5-3-5z" />
+      <path d="M6 12L19 21" />
+      <path d="M2 6h2" />
+      <path d="M8 6h2" />
+    </>
+  ),
+
+  // Activity skills
+  mining: (
+    <>
+      <path d="M3 4c5-1 13-1 18 0" />
+      <path d="M3 4c1 1 2 2 4 2" />
+      <path d="M21 4c-1 1-2 2-4 2" />
+      <path d="M11 6L19 21" />
+      <path d="M3 21l3-3" />
+    </>
+  ),
+  gathering: (
+    <>
+      <path d="M6 18c0-7 4-12 13-13-1 9-6 13-13 13z" />
+      <path d="M6 18l8-8" />
+    </>
+  ),
+  woodcutting: (
+    <>
+      <path d="M3 7c2-3 7-3 9 0l-4 4-5-1z" />
+      <path d="M8 11L20 21" />
+      <path d="M3 21l3-3" />
+    </>
+  ),
+  skinning: (
+    <>
+      <path d="M3 16L17 2l4 4-14 14z" />
+      <path d="M3 16l-1 4 4-1" />
+    </>
+  ),
+  fishing: (
+    <>
+      <path d="M5 4l8 14" />
+      <path d="M3 21c0-3 2-5 5-5" />
+      <path d="M13 18a3 3 0 0 0 0-6" />
+    </>
+  ),
+  cooking: (
+    <>
+      <path d="M4 11h16v6a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3z" />
+      <path d="M2 11h20" />
+      <path d="M9 7l1-3" />
+      <path d="M13 7l1-3" />
+      <path d="M17 7l1-3" />
+    </>
+  ),
+  alchemy: (
+    <>
+      <path d="M9 3v6l-4 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-4-9V3" />
+      <path d="M8 3h8" />
+      <path d="M7 14h10" />
+    </>
+  ),
+}
+
+function SkillIcon({ name, category }: { name: string; category: SkillCategory }) {
+  const color = category === 'Proficiency' ? 'var(--accent)' : '#c8a64a'
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="skill-icon"
+      style={{ color }}
+      aria-hidden="true"
+    >
+      {SKILL_ICONS[name] ?? <circle cx="12" cy="12" r="6" />}
+    </svg>
+  )
+}
+
+function SkillsSection() {
+  const skills = useAsyncList<Skill>(() => listSkills())
+  const proficiencies = skills?.filter((s) => s.category === 'Proficiency') ?? []
+  const activities = skills?.filter((s) => s.category === 'Activity') ?? []
+
+  return (
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Skills</h2>
+        <p>
+          Player skills and proficiencies — combat profs gate weapon use; activities
+          cover gathering, crafting, and trade.
+        </p>
+      </header>
+
+      {skills === null ? (
+        <p className="text-dim">Loading…</p>
+      ) : skills.length === 0 ? (
+        <p className="text-dim">No skills defined yet.</p>
+      ) : (
+        <>
+          {proficiencies.length > 0 && (
+            <SkillGroup title="Proficiencies" skills={proficiencies} />
+          )}
+          {activities.length > 0 && (
+            <SkillGroup title="Activities" skills={activities} />
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
+function SkillGroup({ title, skills }: { title: string; skills: Skill[] }) {
+  return (
+    <div className="content-subgroup">
+      <h3 className="content-subgroup-heading">{title}</h3>
+      <div className="content-card-grid">
+        {skills.map((s) => (
+          <article key={s.name} className="content-card">
+            <header className="content-card-header">
+              <h3 className="content-card-title">
+                <SkillIcon name={s.name} category={s.category} />
+                {s.display_name}
+              </h3>
+              <span className="content-card-id">{s.name}</span>
+            </header>
+            {s.description && <p className="content-card-body">{s.description}</p>}
+            {s.per_level_effects.length > 0 && (
+              <ul className="content-card-rules">
+                {s.per_level_effects.map((eff, i) => (
+                  <li key={i}>{eff.description}</li>
+                ))}
+              </ul>
+            )}
+            <div className="content-card-meta">
+              <span className="tag-muted">Max lv {s.max_level}</span>
+              {s.item_types.map((t) => (
+                <span key={t} className="tag-muted">
+                  {t}
+                </span>
+              ))}
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+const RACE_ICONS: Record<string, ReactNode> = {
+  human: (
+    <>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M5 21c0-4 3-7 7-7s7 3 7 7" />
+    </>
+  ),
+  dwarf: (
+    <>
+      <path d="M7 6h10v2a5 5 0 0 1-1 3" />
+      <path d="M8 11c0 4 2 7 4 8 2-1 4-4 4-8" />
+      <circle cx="10" cy="10" r="0.6" fill="currentColor" stroke="none" />
+      <circle cx="14" cy="10" r="0.6" fill="currentColor" stroke="none" />
+      <path d="M12 3v3" />
+    </>
+  ),
+  elf: (
+    <>
+      <circle cx="12" cy="9" r="4" />
+      <path d="M8 8l-4-3 2 5" />
+      <path d="M16 8l4-3-2 5" />
+      <path d="M6 21c0-3.5 2.5-6 6-6s6 2.5 6 6" />
+    </>
+  ),
+  orc: (
+    <>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M10 12v3" />
+      <path d="M14 12v3" />
+      <path d="M5 21c0-4 3-7 7-7s7 3 7 7" />
+    </>
+  ),
+}
+
+const RACE_COLORS: Record<string, string> = {
+  human: '#d4a861',
+  dwarf: '#c97e3d',
+  elf: '#6fb98a',
+  orc: '#7d9b48',
+}
+
+function RaceIcon({ id }: { id: string }) {
+  const color = RACE_COLORS[id] ?? 'var(--text)'
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="race-icon"
+      style={{ color }}
+      aria-hidden="true"
+    >
+      {RACE_ICONS[id] ?? <circle cx="12" cy="12" r="6" />}
+    </svg>
+  )
+}
+
+function BonusList({
+  title,
+  entries,
+}: {
+  title: string
+  entries: { value: number; description: string }[]
+}) {
+  return (
+    <div className="content-card-bonus-group">
+      <div className="content-card-bonus-heading">{title}</div>
+      <ul className="content-card-bonuses">
+        {entries.map((b, i) => (
+          <li
+            key={i}
+            className={
+              b.value > 0
+                ? 'content-card-bonus-positive'
+                : b.value < 0
+                  ? 'content-card-bonus-negative'
+                  : ''
+            }
+          >
+            {b.description}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function RacesSection() {
   const races = useAsyncList<Race>(() => listRaces())
   return (
@@ -402,10 +951,469 @@ function RacesSection() {
       {races?.map((r) => (
         <article key={r.id} className="content-card">
           <header className="content-card-header">
-            <h3 className="content-card-title">{r.display_name}</h3>
+            <h3 className="content-card-title">
+              <RaceIcon id={r.id} />
+              {r.display_name}
+            </h3>
             <span className="content-card-id">{r.id}</span>
           </header>
           {r.description && <p className="content-card-body">{r.description}</p>}
+          {r.ability_bonuses.length > 0 && (
+            <BonusList title="Abilities" entries={r.ability_bonuses} />
+          )}
+          {r.resource_bonuses.length > 0 && (
+            <BonusList title="Resources" entries={r.resource_bonuses} />
+          )}
+        </article>
+      ))}
+    </ContentSection>
+  )
+}
+
+const ALIGNMENT_ICONS: Record<string, ReactNode> = {
+  good: (
+    <>
+      <path d="M12 3l8 3v6c0 5-4 8-8 9-4-1-8-4-8-9V6z" />
+      <path d="M12 9v6" />
+      <path d="M9 12h6" />
+    </>
+  ),
+  neutral: (
+    <>
+      <path d="M12 3v18" />
+      <path d="M9 21h6" />
+      <path d="M5 7h14" />
+      <path d="M5 7l-3 5h6z" />
+      <path d="M19 7l-3 5h6z" />
+    </>
+  ),
+  evil: (
+    <>
+      <path d="M5 14V8l3 4 4-7 4 7 3-4v6z" />
+      <path d="M5 14h14v3H5z" />
+      <path d="M9 14v3" />
+      <path d="M15 14v3" />
+    </>
+  ),
+}
+
+const ALIGNMENT_COLORS: Record<string, string> = {
+  good: '#d4b061',
+  neutral: '#6a8a9a',
+  evil: '#8a2a3a',
+}
+
+function AlignmentIcon({ id }: { id: string }) {
+  const color = ALIGNMENT_COLORS[id] ?? 'var(--text)'
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="alignment-icon"
+      style={{ color }}
+      aria-hidden="true"
+    >
+      {ALIGNMENT_ICONS[id] ?? <circle cx="12" cy="12" r="6" />}
+    </svg>
+  )
+}
+
+const FACTION_ICONS: Record<string, ReactNode> = {
+  // Carrion Pact: a sigil — circle with three converging marks
+  // (secret-society shorthand). A fitting mark for a death-cult cabal.
+  carrion_pact: (
+    <>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 4v6" />
+      <path d="M5 16l4-3" />
+      <path d="M19 16l-4-3" />
+      <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+    </>
+  ),
+}
+
+const FACTION_COLORS: Record<string, string> = {
+  carrion_pact: '#9c7654',
+}
+
+function FactionIcon({ id }: { id: string }) {
+  const color = FACTION_COLORS[id] ?? 'var(--text)'
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="faction-icon"
+      style={{ color }}
+      aria-hidden="true"
+    >
+      {FACTION_ICONS[id] ?? <circle cx="12" cy="12" r="6" />}
+    </svg>
+  )
+}
+
+const ABILITY_ICONS: Record<string, ReactNode> = {
+  strength: (
+    <>
+      <path d="M5 11h2l1-4 4 4 4-4 1 4h2" />
+      <path d="M4 14a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
+      <path d="M9 19v2" />
+      <path d="M15 19v2" />
+    </>
+  ),
+  dexterity: (
+    <>
+      <path d="M3 21L21 3" />
+      <path d="M21 3v8" />
+      <path d="M21 3h-8" />
+      <path d="M5 18l1 3 3-1" />
+    </>
+  ),
+  constitution: (
+    <>
+      <path d="M12 3l8 3v6c0 5-4 8-8 9-4-1-8-4-8-9V6z" />
+      <path d="M9 13c1.5 1.5 1.5 1.5 3 0s1.5-1.5 3 0" />
+    </>
+  ),
+  intelligence: (
+    <>
+      <path d="M9 4a4 4 0 0 0-2 7c0 1-1 1-1 3a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3c0-2-1-2-1-3a4 4 0 0 0-8 0" />
+      <path d="M12 18v3" />
+    </>
+  ),
+  wisdom: (
+    <>
+      <path d="M2 12c2-4 6-7 10-7s8 3 10 7c-2 4-6 7-10 7s-8-3-10-7z" />
+      <circle cx="12" cy="12" r="3" />
+      <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+    </>
+  ),
+  charisma: (
+    <>
+      <path d="M12 2l2.5 7H22l-6 4.5L18.5 21 12 16.5 5.5 21 8 13.5 2 9h7.5z" />
+    </>
+  ),
+}
+
+const ABILITY_COLORS: Record<string, string> = {
+  strength:     '#c95a3d',
+  dexterity:    '#5fae6a',
+  constitution: '#c97a3d',
+  intelligence: '#5b8ad6',
+  wisdom:       '#9b6fcf',
+  charisma:     '#d4609a',
+}
+
+function AbilityIcon({ name }: { name: string }) {
+  const color = ABILITY_COLORS[name] ?? 'var(--text)'
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="ability-icon"
+      style={{ color }}
+      aria-hidden="true"
+    >
+      {ABILITY_ICONS[name] ?? <circle cx="12" cy="12" r="6" />}
+    </svg>
+  )
+}
+
+const STAT_CATEGORY_ICONS: Record<StatCategory, ReactNode> = {
+  Power: (
+    <>
+      <path d="M5 19L19 5" />
+      <path d="M16 5h4v4" />
+      <path d="M3 21l4-4" />
+    </>
+  ),
+  Crit: (
+    <>
+      <path d="M12 2l2.5 7H22l-6 4.5L18.5 21 12 16.5 5.5 21 8 13.5 2 9h7.5z" />
+    </>
+  ),
+  Speed: (
+    <>
+      <path d="M5 12h13" />
+      <path d="M14 7l5 5-5 5" />
+      <path d="M3 8l3 4-3 4" />
+    </>
+  ),
+  Defense: (
+    <>
+      <path d="M12 3l8 3v6c0 5-4 8-8 9-4-1-8-4-8-9V6z" />
+    </>
+  ),
+  Precision: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="4" />
+      <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+    </>
+  ),
+  Sustain: (
+    <>
+      <path d="M12 21s-7-4.5-9-9a5 5 0 0 1 9-3 5 5 0 0 1 9 3c-2 4.5-9 9-9 9z" />
+      <path d="M12 8v6" />
+      <path d="M9 11h6" />
+    </>
+  ),
+  Mastery: (
+    <>
+      <path d="M5 8l4 3 3-6 3 6 4-3-2 11H7z" />
+      <path d="M7 21h10" />
+    </>
+  ),
+  Gathering: (
+    <>
+      <path d="M4 11h16l-2 9H6z" />
+      <path d="M4 11c0-3 4-5 8-5s8 2 8 5" />
+      <path d="M9 11c1-2 2-3 3-3s2 1 3 3" />
+    </>
+  ),
+}
+
+const STAT_CATEGORY_COLORS: Record<StatCategory, string> = {
+  Power:     '#c95a3d',
+  Crit:      '#e84f1a',
+  Speed:     '#d4b061',
+  Defense:   '#5b8ad6',
+  Precision: '#c0c0c0',
+  Sustain:   '#5fae6a',
+  Mastery:   '#9b6fcf',
+  Gathering: '#8b9b3a',
+}
+
+function StatIcon({ category }: { category: StatCategory }) {
+  const color = STAT_CATEGORY_COLORS[category] ?? 'var(--text)'
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="stat-icon"
+      style={{ color }}
+      aria-hidden="true"
+    >
+      {STAT_CATEGORY_ICONS[category] ?? <circle cx="12" cy="12" r="6" />}
+    </svg>
+  )
+}
+
+const STAT_CATEGORY_ORDER: StatCategory[] = [
+  'Power',
+  'Crit',
+  'Speed',
+  'Defense',
+  'Precision',
+  'Sustain',
+  'Mastery',
+  'Gathering',
+]
+
+function StatsSection() {
+  const stats = useAsyncList<Stat>(() => listStats())
+
+  return (
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Stats</h2>
+        <p>
+          Derived combat stats — attack power, crit, haste, armor, and the rest. Most
+          values come from gear and buffs rather than character creation.
+        </p>
+      </header>
+
+      {stats === null ? (
+        <p className="text-dim">Loading…</p>
+      ) : stats.length === 0 ? (
+        <p className="text-dim">No stats defined yet.</p>
+      ) : (
+        <>
+          {STAT_CATEGORY_ORDER.map((cat) => {
+            const group = stats.filter((s) => s.category === cat)
+            if (group.length === 0) return null
+            return <StatGroup key={cat} title={cat} stats={group} />
+          })}
+        </>
+      )}
+    </section>
+  )
+}
+
+function StatGroup({ title, stats }: { title: StatCategory; stats: Stat[] }) {
+  return (
+    <div className="content-subgroup">
+      <h3 className="content-subgroup-heading">{title}</h3>
+      <div className="content-card-grid">
+        {stats.map((s) => (
+          <article key={s.id} className="content-card">
+            <header className="content-card-header">
+              <h3 className="content-card-title">
+                <StatIcon category={s.category} />
+                {s.display_name}
+              </h3>
+              <span className="content-card-id">{s.is_percent ? '%' : '#'}</span>
+            </header>
+            {s.description && <p className="content-card-body">{s.description}</p>}
+            {s.conversion_per_point && (
+              <p className="content-card-metric">{s.conversion_per_point}</p>
+            )}
+            {s.affects && (
+              <div className="content-card-meta">
+                <span className="tag-muted">{s.affects}</span>
+              </div>
+            )}
+          </article>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+const RESOURCE_ICONS: Record<string, ReactNode> = {
+  health: (
+    <>
+      <path d="M12 21s-7-4.5-9-9a5 5 0 0 1 9-3 5 5 0 0 1 9 3c-2 4.5-9 9-9 9z" />
+    </>
+  ),
+  mana: (
+    <>
+      <path d="M12 3c-3 5-6 8-6 12a6 6 0 0 0 12 0c0-4-3-7-6-12z" />
+    </>
+  ),
+  stamina: (
+    <>
+      <path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z" />
+    </>
+  ),
+}
+
+function ResourceIcon({ id, color }: { id: string; color: string }) {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="resource-icon"
+      style={{ color }}
+      aria-hidden="true"
+    >
+      {RESOURCE_ICONS[id] ?? <circle cx="12" cy="12" r="6" />}
+    </svg>
+  )
+}
+
+function ResourcesSection() {
+  const resources = useAsyncList<Resource>(() => listResources())
+  return (
+    <ContentSection
+      title="Resources"
+      description="Pools every character carries — health, mana, and stamina. Catalog values define defaults; each character's current and max values live on necro_player.character_resources."
+      items={resources}
+      emptyText="No resources defined yet."
+    >
+      {resources?.map((r) => (
+        <article key={r.id} className="content-card">
+          <header className="content-card-header">
+            <h3 className="content-card-title">
+              <ResourceIcon id={r.id} color={r.display_color} />
+              {r.display_name}
+            </h3>
+            <span className="content-card-id">{r.id}</span>
+          </header>
+          {r.description && <p className="content-card-body">{r.description}</p>}
+        </article>
+      ))}
+    </ContentSection>
+  )
+}
+
+function AbilitiesSection() {
+  const abilities = useAsyncList<Ability>(() => listAbilities())
+  return (
+    <ContentSection
+      title="Abilities"
+      description="The six D&D-style ability scores. Every character has a value in each; rolls and damage scale off them."
+      items={abilities}
+      emptyText="No abilities defined yet."
+    >
+      {abilities?.map((a) => (
+        <article key={a.name} className="content-card">
+          <header className="content-card-header">
+            <h3 className="content-card-title">
+              <AbilityIcon name={a.name} />
+              {a.display_name}
+            </h3>
+            <span className="content-card-id">{a.name.slice(0, 3).toUpperCase()}</span>
+          </header>
+          {a.description && <p className="content-card-body">{a.description}</p>}
+          {a.derived_effects.length > 0 && (
+            <ul className="content-card-rules">
+              {a.derived_effects.map((eff, i) => (
+                <li key={i}>{eff.description}</li>
+              ))}
+            </ul>
+          )}
+        </article>
+      ))}
+    </ContentSection>
+  )
+}
+
+function AlignmentsSection() {
+  const alignments = useAsyncList<Alignment>(() => listAlignments())
+  return (
+    <ContentSection
+      title="Alignments"
+      description="Ideological axes characters drift along over time. Alignment is set by gameplay actions — moral choices, kills, faction reputations — not chosen at creation."
+      items={alignments}
+      emptyText="No alignments defined yet."
+    >
+      {alignments?.map((a) => (
+        <article key={a.id} className="content-card">
+          <header className="content-card-header">
+            <h3 className="content-card-title">
+              <AlignmentIcon id={a.id} />
+              {a.display_name}
+            </h3>
+            <span className="content-card-id">{a.id}</span>
+          </header>
+          {a.description && <p className="content-card-body">{a.description}</p>}
+          {a.gameplay_rules.length > 0 && (
+            <ul className="content-card-rules">
+              {a.gameplay_rules.map((rule, i) => (
+                <li key={i}>{rule}</li>
+              ))}
+            </ul>
+          )}
         </article>
       ))}
     </ContentSection>
@@ -424,7 +1432,10 @@ function FactionsSection() {
       {factions?.map((f) => (
         <article key={f.id} className="content-card">
           <header className="content-card-header">
-            <h3 className="content-card-title">{f.display_name}</h3>
+            <h3 className="content-card-title">
+              <FactionIcon id={f.id} />
+              {f.display_name}
+            </h3>
             <span className="content-card-id">{f.id}</span>
           </header>
           {f.description && <p className="content-card-body">{f.description}</p>}
@@ -468,6 +1479,88 @@ function ZonesSection() {
           </div>
         </article>
       ))}
+    </ContentSection>
+  )
+}
+
+function CharactersSection() {
+  const characters = useAsyncList<PublicCharacter>(() => listPublicCharacters())
+  const realms = useAsyncList<Realm>(() => listRealms())
+  const realmNameById = new Map((realms ?? []).map((r) => [r.id, r.display_name]))
+
+  return (
+    <ContentSection
+      title="Characters"
+      description="Player characters across all realms, sorted by level."
+      items={characters}
+      emptyText="No characters yet."
+    >
+      {characters?.map((c) => (
+        <article key={c.id} className="content-card">
+          <header className="content-card-header">
+            <h3 className="content-card-title">
+              <RaceIcon id={c.race} />
+              {c.character_name}
+            </h3>
+            <span className="content-card-id">Lv {c.level}</span>
+          </header>
+          <div className="content-card-meta">
+            <span className="tag-muted">{capitalize(c.race)}</span>
+            <span className="tag-muted">
+              {realmNameById.get(c.realm_id) ?? '—'}
+            </span>
+          </div>
+        </article>
+      ))}
+    </ContentSection>
+  )
+}
+
+function capitalize(s: string): string {
+  return s.length === 0 ? s : s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+function RealmsSection() {
+  const realms = useAsyncList<Realm>(() => listRealms())
+  const stats = useAsyncList<RealmStats>(() => getRealmStats())
+
+  const statsById = new Map((stats ?? []).map((s) => [s.realm_id, s]))
+
+  return (
+    <ContentSection
+      title="Realms"
+      description="Logical shards players choose between. Characters are realm-bound — name uniqueness, guilds, and mail all scope to a realm."
+      items={realms}
+      emptyText="No realms defined yet."
+    >
+      {realms?.map((r) => {
+        const s = statsById.get(r.id)
+        const total = s?.total_characters ?? 0
+        const online = s?.online_characters ?? 0
+        return (
+          <article key={r.id} className="content-card">
+            <header className="content-card-header">
+              <h3 className="content-card-title">{r.display_name}</h3>
+              <span className="content-card-id">{r.short_name}</span>
+            </header>
+            <p className="content-card-body">
+              {r.region} · {r.locale} · {r.timezone}
+            </p>
+            <div className="content-card-meta">
+              <span className={r.is_online ? 'tag' : 'tag-muted'}>
+                {r.is_online ? 'Online' : 'Offline'}
+              </span>
+              <span className="tag-muted">{r.realm_type}</span>
+              <span className="tag-muted">{r.population}</span>
+              {r.connected_to_id && <span className="tag-muted">Connected</span>}
+              <span className="tag-muted">
+                {total.toLocaleString()} character{total === 1 ? '' : 's'}
+              </span>
+              <span className="tag-muted">{online.toLocaleString()} online</span>
+            </div>
+          </article>
+        )
+      })}
     </ContentSection>
   )
 }

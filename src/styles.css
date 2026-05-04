@@ -1204,6 +1204,48 @@ body {
   gap: 14px;
 }
 
+.content-subgroup {
+  margin-bottom: 24px;
+}
+
+.content-subgroup:last-child {
+  margin-bottom: 0;
+}
+
+.content-subgroup-heading {
+  margin: 0 0 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.damage-icon {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 8px;
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 4px currentColor);
+}
+
+.skill-icon,
+.race-icon,
+.faction-icon,
+.alignment-icon,
+.ability-icon,
+.resource-icon,
+.stat-icon {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.resource-icon {
+  filter: drop-shadow(0 0 4px currentColor);
+}
+
 .content-card {
   background: var(--bg-1);
   border: 1px solid var(--border);
@@ -1247,6 +1289,70 @@ body {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 4px;
+}
+
+.content-card-rules {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+
+.content-card-metric {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: 'Consolas', 'Menlo', monospace;
+  color: var(--accent);
+  background: rgba(255, 59, 59, 0.06);
+  border-left: 2px solid rgba(255, 59, 59, 0.4);
+  border-radius: 0 4px 4px 0;
+}
+
+.content-card-bonus-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.content-card-bonus-heading {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.content-card-bonuses {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.content-card-bonuses li {
+  font-size: 12.5px;
+  font-family: 'Consolas', 'Menlo', monospace;
+  color: var(--text-dim);
+}
+
+.content-card-bonus-positive {
+  color: #78dc8c !important;
+}
+
+.content-card-bonus-negative {
+  color: var(--danger) !important;
+}
+
+.content-card-rules li {
+  margin-bottom: 4px;
+}
+
+.content-card-rules li:last-child {
+  margin-bottom: 0;
 }
 
 .tag,
