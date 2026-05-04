@@ -28,7 +28,95 @@ export type PublicCharacter = {
   character_name: string
   race: string
   level: number
+  created_at: string
   realm_id: string
+}
+
+export type PublicCharacterDetail = {
+  id: string
+  character_name: string
+  race: string
+  level: number
+  alignment_id: string | null
+  last_zone: string
+  created_at: string
+  realm_id: string
+  realm_name: string | null
+}
+
+export type PublicCharacterEquipmentSlot = {
+  slot: string
+  item_id: string
+  item_name: string | null
+  item_rarity: string | null
+  item_type: string | null
+}
+
+export type PublicCharacterAbilityScore = {
+  ability: string
+  display_name: string | null
+  base_value: number
+  equipment_bonus_value: number
+  aura_bonus_value: number
+  total_value: number
+}
+
+export type PublicCharacterCalculatedStat = {
+  id: string
+  display_name: string
+  category: string
+  is_percent: boolean
+  affects: string
+  conversion_per_point: string
+  value: number
+  sort_order: number
+}
+
+export type PublicCharacterSkill = {
+  skill: string
+  display_name: string | null
+  category: string | null
+  level: number
+  current_xp: number
+}
+
+export type PublicCharacterResource = {
+  type: string
+  display_name: string | null
+  display_color: string | null
+  sort_order: number | null
+  base_max_value: number
+  bonus_max_value: number
+  max_value: number
+  current_value: number
+  regen_rate: number
+  regen_delay: number
+}
+
+export type AuraModifier = {
+  ability?: string
+  stat?: string
+  resource?: string
+  value: number
+  modifier_type: 'Flat' | 'Percent'
+  description?: string
+}
+
+export type PublicCharacterActiveAura = {
+  instance_id: string
+  aura_id: string
+  display_name: string
+  description: string
+  icon_path: string | null
+  is_harmful: boolean
+  duration: number
+  remaining_time: number
+  stacks: number
+  applied_at_utc: string
+  caster_name: string
+  ability_bonuses: AuraModifier[]
+  stat_bonuses: AuraModifier[]
+  resource_bonuses: AuraModifier[]
 }
 
 export type Resource = {
@@ -331,6 +419,98 @@ export async function listPublicCharacters(): Promise<PublicCharacter[]> {
     return []
   }
   return (data as PublicCharacter[] | null) ?? []
+}
+
+export async function getPublicCharacter(
+  id: string,
+): Promise<PublicCharacterDetail | null> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .rpc('get_public_character', { p_character_id: id })
+  if (error) {
+    console.error('Failed to load character:', error.message)
+    return null
+  }
+  const rows = (data as PublicCharacterDetail[] | null) ?? []
+  return rows[0] ?? null
+}
+
+export async function getPublicCharacterEquipment(
+  id: string,
+): Promise<PublicCharacterEquipmentSlot[]> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .rpc('get_public_character_equipment', { p_character_id: id })
+  if (error) {
+    console.error('Failed to load equipment:', error.message)
+    return []
+  }
+  return (data as PublicCharacterEquipmentSlot[] | null) ?? []
+}
+
+export async function getPublicCharacterAbilityScores(
+  id: string,
+): Promise<PublicCharacterAbilityScore[]> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .rpc('get_public_character_ability_scores', { p_character_id: id })
+  if (error) {
+    console.error('Failed to load ability scores:', error.message)
+    return []
+  }
+  return (data as PublicCharacterAbilityScore[] | null) ?? []
+}
+
+export async function getPublicCharacterSkills(
+  id: string,
+): Promise<PublicCharacterSkill[]> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .rpc('get_public_character_skills', { p_character_id: id })
+  if (error) {
+    console.error('Failed to load skills:', error.message)
+    return []
+  }
+  return (data as PublicCharacterSkill[] | null) ?? []
+}
+
+export async function getPublicCharacterResources(
+  id: string,
+): Promise<PublicCharacterResource[]> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .rpc('get_public_character_resources', { p_character_id: id })
+  if (error) {
+    console.error('Failed to load resources:', error.message)
+    return []
+  }
+  return (data as PublicCharacterResource[] | null) ?? []
+}
+
+export async function getPublicCharacterCalculatedStats(
+  id: string,
+): Promise<PublicCharacterCalculatedStat[]> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .rpc('get_public_character_calculated_stats', { p_character_id: id })
+  if (error) {
+    console.error('Failed to load calculated stats:', error.message)
+    return []
+  }
+  return (data as PublicCharacterCalculatedStat[] | null) ?? []
+}
+
+export async function getPublicCharacterActiveAuras(
+  id: string,
+): Promise<PublicCharacterActiveAura[]> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .rpc('get_public_character_active_auras', { p_character_id: id })
+  if (error) {
+    console.error('Failed to load active auras:', error.message)
+    return []
+  }
+  return (data as PublicCharacterActiveAura[] | null) ?? []
 }
 
 export async function listDamageTypes(): Promise<DamageType[]> {

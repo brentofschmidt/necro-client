@@ -1,6 +1,7 @@
 import { ReactNode, useEffect, useRef, useState } from 'react'
-import { useParams, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { fetchGameById, Game, GameStatus } from '../lib/games'
+import { formatRelativeShort } from '../lib/time'
 import {
   Ability,
   Action,
@@ -42,9 +43,10 @@ import {
   Zone,
 } from '../lib/necroContent'
 
-type TabId =
-  | 'information'
-  | 'characters'
+type SectionId = 'game' | 'characters' | 'guilds' | 'leaderboards' | 'patch-notes'
+
+type GameInfoTabId =
+  | 'overview'
   | 'items'
   | 'item_types'
   | 'rarities'
@@ -61,12 +63,17 @@ type TabId =
   | 'factions'
   | 'zones'
   | 'realms'
-  | 'leaderboards'
-  | 'guilds'
 
-const TABS: { id: TabId; label: string }[] = [
-  { id: 'information', label: 'Game Information' },
+const SECTIONS: { id: SectionId; label: string }[] = [
+  { id: 'game', label: 'Game Information' },
   { id: 'characters', label: 'Characters' },
+  { id: 'guilds', label: 'Guilds' },
+  { id: 'leaderboards', label: 'Leaderboards' },
+  { id: 'patch-notes', label: 'Patch Notes' },
+]
+
+const GAME_INFO_TABS: { id: GameInfoTabId; label: string }[] = [
+  { id: 'overview', label: 'Overview' },
   { id: 'items', label: 'Items' },
   { id: 'item_types', label: 'Item Types' },
   { id: 'rarities', label: 'Rarities' },
@@ -83,14 +90,17 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'factions', label: 'Factions' },
   { id: 'zones', label: 'Zones' },
   { id: 'realms', label: 'Realms' },
-  { id: 'leaderboards', label: 'Leaderboards' },
-  { id: 'guilds', label: 'Guilds' },
 ]
 
-const DEFAULT_TAB: TabId = 'information'
+const DEFAULT_SECTION: SectionId = 'game'
+const DEFAULT_GAME_INFO_TAB: GameInfoTabId = 'overview'
 
-function isTabId(value: string | null): value is TabId {
-  return TABS.some((t) => t.id === value)
+function isSectionId(value: string | null | undefined): value is SectionId {
+  return SECTIONS.some((s) => s.id === value)
+}
+
+function isGameInfoTabId(value: string | null | undefined): value is GameInfoTabId {
+  return GAME_INFO_TABS.some((t) => t.id === value)
 }
 
 function TabIcon({ children }: { children: ReactNode }) {
@@ -112,20 +122,12 @@ function TabIcon({ children }: { children: ReactNode }) {
   )
 }
 
-const TAB_ICONS: Record<TabId, ReactNode> = {
-  information: (
+const TAB_ICONS: Record<GameInfoTabId, ReactNode> = {
+  overview: (
     <TabIcon>
       <circle cx="12" cy="12" r="9" />
       <path d="M12 8h.01" />
       <path d="M11 12h1v4h1" />
-    </TabIcon>
-  ),
-  characters: (
-    <TabIcon>
-      <circle cx="9" cy="9" r="3" />
-      <path d="M3 19c0-3 3-5 6-5s6 2 6 5" />
-      <circle cx="17" cy="8" r="2.5" />
-      <path d="M15 19c0-2 1.5-4 4-4" />
     </TabIcon>
   ),
   items: (
@@ -235,19 +237,6 @@ const TAB_ICONS: Record<TabId, ReactNode> = {
       <circle cx="7" cy="13.5" r="0.5" />
     </TabIcon>
   ),
-  leaderboards: (
-    <TabIcon>
-      <rect x="4" y="13" width="4" height="8" />
-      <rect x="10" y="8" width="4" height="13" />
-      <rect x="16" y="3" width="4" height="18" />
-    </TabIcon>
-  ),
-  guilds: (
-    <TabIcon>
-      <path d="M5 21V8l7-5 7 5v13" />
-      <path d="M9 21v-7h6v7" />
-    </TabIcon>
-  ),
 }
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
@@ -266,20 +255,40 @@ const STATUS_LABELS: Record<GameStatus, string> = {
 type LoadState = 'loading' | 'found' | 'not-found'
 
 export function GamePage() {
-  const { gameId } = useParams<{ gameId: string }>()
-  const [searchParams, setSearchParams] = useSearchParams()
+  const params = useParams<{ gameId: string; section?: string; tab?: string }>()
+  const navigate = useNavigate()
+  const { gameId, section: paramSection, tab: paramTab } = params
   const [game, setGame] = useState<Game | null>(null)
   const [loadState, setLoadState] = useState<LoadState>('loading')
 
-  const queryTab = searchParams.get('tab')
-  const activeTab: TabId = isTabId(queryTab) ? queryTab : DEFAULT_TAB
+  const activeSection: SectionId = isSectionId(paramSection)
+    ? paramSection
+    : DEFAULT_SECTION
+
+  const activeGameInfoTab: GameInfoTabId = isGameInfoTabId(paramTab)
+    ? paramTab
+    : DEFAULT_GAME_INFO_TAB
+
+  // Remember the last game-info sub-tab the user looked at so switching
+  // away to e.g. Characters and back to Game Information lands them on the
+  // same sub-tab they had open, not the default Overview.
+  const [lastGameInfoTab, setLastGameInfoTab] =
+    useState<GameInfoTabId>(DEFAULT_GAME_INFO_TAB)
+
+  useEffect(() => {
+    if (paramSection === 'game' && paramTab && isGameInfoTabId(paramTab)) {
+      setLastGameInfoTab(paramTab)
+    }
+  }, [paramSection, paramTab])
+
   const contentRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    // Reset only the right column's scroll. The left tab list scrolls
-    // independently and the page itself doesn't scroll on these tabs.
-    contentRef.current?.scrollTo(0, 0)
-  }, [activeTab])
+    // Tabs are page-scrolling now (no inner scroll container) — bring the
+    // user back to the top of the new section / sub-tab instead of leaving
+    // them wherever they last scrolled.
+    window.scrollTo({ top: 0, behavior: 'auto' })
+  }, [activeSection, activeGameInfoTab])
 
   useEffect(() => {
     if (!gameId) {
@@ -303,15 +312,41 @@ export function GamePage() {
     }
   }, [gameId])
 
-  function setTab(id: TabId) {
-    const next = new URLSearchParams(searchParams)
-    next.set('tab', id)
-    setSearchParams(next, { replace: true })
+  // Canonicalize the URL so any partial / invalid path lands on a real one
+  // (e.g. /g/necro → /g/necro/game/overview, /g/necro/game → same,
+  // /g/necro/characters/foo → /g/necro/characters).
+  useEffect(() => {
+    if (!gameId) return
+    if (!isSectionId(paramSection)) {
+      navigate(`/g/${gameId}/game/${DEFAULT_GAME_INFO_TAB}`, { replace: true })
+      return
+    }
+    if (paramSection === 'game' && !isGameInfoTabId(paramTab)) {
+      navigate(`/g/${gameId}/game/${DEFAULT_GAME_INFO_TAB}`, { replace: true })
+      return
+    }
+    if (paramSection !== 'game' && paramTab) {
+      navigate(`/g/${gameId}/${paramSection}`, { replace: true })
+    }
+  }, [gameId, paramSection, paramTab, navigate])
+
+  function setSection(id: SectionId) {
+    if (!gameId) return
+    if (id === 'game') {
+      navigate(`/g/${gameId}/game/${lastGameInfoTab}`, { replace: true })
+    } else {
+      navigate(`/g/${gameId}/${id}`, { replace: true })
+    }
+  }
+
+  function setGameInfoTab(id: GameInfoTabId) {
+    if (!gameId) return
+    navigate(`/g/${gameId}/game/${id}`, { replace: true })
   }
 
   if (loadState === 'loading') {
     return (
-      <div className="settings-page">
+      <div className="settings-page settings-page-flow">
         <p className="text-dim">Loading…</p>
       </div>
     )
@@ -319,109 +354,139 @@ export function GamePage() {
 
   if (loadState === 'not-found' || !game) {
     return (
-      <div className="settings-page">
+      <div className="settings-page settings-page-flow">
         <h1 className="settings-title">Game not found</h1>
         <p className="text-dim">No game exists with that id.</p>
       </div>
     )
   }
 
-  let content: ReactNode = null
-  switch (activeTab) {
-    case 'information':
-      content = <InformationSection game={game} />
-      break
-    case 'characters':
-      content = <CharactersSection />
+  let gameInfoContent: ReactNode = null
+  switch (activeGameInfoTab) {
+    case 'overview':
+      gameInfoContent = <InformationSection game={game} />
       break
     case 'items':
-      content = <ItemsSection />
+      gameInfoContent = <ItemsSection />
       break
     case 'item_types':
-      content = <ItemTypesSection />
+      gameInfoContent = <ItemTypesSection />
       break
     case 'rarities':
-      content = <RaritiesSection />
+      gameInfoContent = <RaritiesSection />
       break
     case 'recipes':
-      content = <RecipesSection />
+      gameInfoContent = <RecipesSection />
       break
     case 'abilities':
-      content = <AbilitiesSection />
+      gameInfoContent = <AbilitiesSection />
       break
     case 'resources':
-      content = <ResourcesSection />
+      gameInfoContent = <ResourcesSection />
       break
     case 'stats':
-      content = <StatsSection />
+      gameInfoContent = <StatsSection />
       break
     case 'actions':
-      content = <ActionsSection />
+      gameInfoContent = <ActionsSection />
       break
     case 'spells':
-      content = <SpellsSection />
+      gameInfoContent = <SpellsSection />
       break
     case 'damage_types':
-      content = <DamageTypesSection />
+      gameInfoContent = <DamageTypesSection />
       break
     case 'skills':
-      content = <SkillsSection />
+      gameInfoContent = <SkillsSection />
       break
     case 'races':
-      content = <RacesSection />
+      gameInfoContent = <RacesSection />
       break
     case 'alignments':
-      content = <AlignmentsSection />
+      gameInfoContent = <AlignmentsSection />
       break
     case 'factions':
-      content = <FactionsSection />
+      gameInfoContent = <FactionsSection />
       break
     case 'zones':
-      content = <ZonesSection />
+      gameInfoContent = <ZonesSection />
       break
     case 'realms':
-      content = <RealmsSection />
+      gameInfoContent = <RealmsSection />
       break
-    case 'leaderboards':
-      content = (
-        <ComingSoonSection
-          title="Leaderboards"
-          description="Top players by level, achievements, PvP rating, and more."
-        />
+  }
+
+  let sectionContent: ReactNode = null
+  switch (activeSection) {
+    case 'game':
+      sectionContent = (
+        <div className="settings-layout">
+          <nav className="settings-tabs" aria-label={`${game.name} information`}>
+            {GAME_INFO_TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className={`settings-tab ${activeGameInfoTab === t.id ? 'active' : ''}`}
+                onClick={() => setGameInfoTab(t.id)}
+                aria-current={activeGameInfoTab === t.id ? 'page' : undefined}
+              >
+                {TAB_ICONS[t.id]}
+                <span>{t.label}</span>
+              </button>
+            ))}
+          </nav>
+          <div className="settings-content" ref={contentRef}>
+            {gameInfoContent}
+          </div>
+        </div>
       )
       break
+    case 'characters':
+      sectionContent = <CharactersSection />
+      break
     case 'guilds':
-      content = (
+      sectionContent = (
         <ComingSoonSection
           title="Guilds"
           description="Public guild directory — rosters, ranks, and recruitment status."
         />
       )
       break
+    case 'leaderboards':
+      sectionContent = (
+        <ComingSoonSection
+          title="Leaderboards"
+          description="Top players by level, achievements, PvP rating, and more."
+        />
+      )
+      break
+    case 'patch-notes':
+      sectionContent = (
+        <ComingSoonSection
+          title="Patch Notes"
+          description="Update history — new content, balance changes, and bug fixes."
+        />
+      )
+      break
   }
 
   return (
-    <div className="settings-page">
+    <div className="settings-page settings-page-flow">
       <h1 className="settings-title">{game.name}</h1>
-      <div className="settings-layout">
-        <nav className="settings-tabs" aria-label={`${game.name} sections`}>
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              className={`settings-tab ${activeTab === t.id ? 'active' : ''}`}
-              onClick={() => setTab(t.id)}
-              aria-current={activeTab === t.id ? 'page' : undefined}
-            >
-              {TAB_ICONS[t.id]}
-              <span>{t.label}</span>
-            </button>
-          ))}
-        </nav>
-        <div className="settings-content" ref={contentRef}>
-          {content}
-        </div>
-      </div>
+      <nav className="game-section-tabs" aria-label={`${game.name} sections`}>
+        {SECTIONS.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            className={`game-section-tab ${activeSection === s.id ? 'active' : ''}`}
+            onClick={() => setSection(s.id)}
+            aria-current={activeSection === s.id ? 'page' : undefined}
+          >
+            {s.label}
+          </button>
+        ))}
+      </nav>
+      {sectionContent}
     </div>
   )
 }
@@ -2221,6 +2286,7 @@ function ZonesSection() {
 }
 
 function CharactersSection() {
+  const { gameId } = useParams<{ gameId: string }>()
   const characters = useAsyncList<PublicCharacter>(() => listPublicCharacters())
   const realms = useAsyncList<Realm>(() => listRealms())
   const realmNameById = new Map((realms ?? []).map((r) => [r.id, r.display_name]))
@@ -2233,7 +2299,11 @@ function CharactersSection() {
       emptyText="No characters yet."
     >
       {characters?.map((c) => (
-        <article key={c.id} className="content-card">
+        <Link
+          key={c.id}
+          to={`/g/${gameId ?? 'necro'}/characters/${c.id}`}
+          className="content-card content-card-link"
+        >
           <header className="content-card-header">
             <h3 className="content-card-title">
               <RaceIcon id={c.race} />
@@ -2244,10 +2314,13 @@ function CharactersSection() {
           <div className="content-card-meta">
             <span className="tag-muted">{capitalize(c.race)}</span>
             <span className="tag-muted">
+              {formatRelativeShort(c.created_at)} ago
+            </span>
+            <span className="tag-muted">
               {realmNameById.get(c.realm_id) ?? '—'}
             </span>
           </div>
-        </article>
+        </Link>
       ))}
     </ContentSection>
   )

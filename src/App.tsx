@@ -13,6 +13,7 @@ import { AccountSettings } from './components/AccountSettings'
 import { PublishArticle } from './components/PublishArticle'
 import { PublicProfile } from './components/PublicProfile'
 import { GamePage } from './components/GamePage'
+import { CharacterPage } from './components/CharacterPage'
 import {
   About,
   BugReports,
@@ -49,7 +50,11 @@ const router = createBrowserRouter([
           { path: '/account', element: <AccountSettings /> },
           { path: '/publish', element: <PublishArticle /> },
           { path: '/u/:userId', element: <PublicProfile /> },
-          { path: '/g/:gameId', element: <GamePage /> },
+          {
+            path: '/g/:gameId/characters/:characterId/:tab?',
+            element: <CharacterPage />,
+          },
+          { path: '/g/:gameId/:section?/:tab?', element: <GamePage /> },
           { path: '/about', element: <About /> },
           { path: '/contact', element: <Contact /> },
           { path: '/careers', element: <Careers /> },

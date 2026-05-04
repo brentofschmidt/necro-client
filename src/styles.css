@@ -197,6 +197,57 @@ body {
   }
 }
 
+/* Page-flow variant: drop the fixed-height columns + inner scrollbars and
+   let the whole page scroll naturally. Used by /g/:gameId, where the long
+   tab lists (Items / Abilities / etc.) read better as one continuous page
+   than two cropped sub-scrollers. */
+.settings-page-flow .settings-layout {
+  height: auto;
+  min-height: 0;
+  align-items: start;
+}
+
+.settings-page-flow .settings-tabs,
+.settings-page-flow .settings-content {
+  overflow-y: visible;
+  padding-right: 0;
+}
+
+/* Top-level horizontal tabs for the game page (Game Info / Characters /
+   Guilds / Leaderboards / Patch Notes). Sit just below the game title,
+   underline the active tab in red. */
+.game-section-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 28px;
+}
+
+.game-section-tab {
+  padding: 12px 18px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.game-section-tab:hover {
+  color: var(--text);
+}
+
+.game-section-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
 .settings-section {
   padding: 0 0 28px 0;
 }
@@ -1288,6 +1339,304 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.content-card-link {
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease, background 0.15s ease;
+}
+
+.content-card-link:hover {
+  border-color: var(--accent);
+  background: var(--bg-2);
+  transform: translateY(-1px);
+}
+
+.content-card-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.character-page-header {
+  margin-bottom: 24px;
+}
+
+.character-back-link {
+  display: inline-block;
+  font-size: 13px;
+  color: var(--text-dim);
+  text-decoration: none;
+  margin-bottom: 8px;
+  transition: color 0.15s ease;
+}
+
+.character-back-link:hover {
+  color: var(--accent);
+}
+
+.character-page-header .settings-title {
+  margin-bottom: 4px;
+}
+
+.character-page-subtitle {
+  color: var(--text-dim);
+  font-size: 14px;
+}
+
+/* Ability scores reuse the .stat-row layout — the visual is identical
+   (name | value | effect breakdown), the difference is just that the
+   value cell shows a secondary modifier and an optional "from gear/aura"
+   meta line. */
+.stat-value-cell {
+  text-align: right;
+}
+
+.stat-value-line {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.stat-mod {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-value-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.stats-categories {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.stat-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 80px minmax(0, 2fr);
+  align-items: baseline;
+  gap: 18px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.stat-row:last-child {
+  border-bottom: none;
+}
+
+.stat-name {
+  font-size: 13px;
+  color: var(--text);
+  letter-spacing: 0.3px;
+}
+
+.stat-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.stat-effect {
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stat-row-zero .stat-name,
+.stat-row-zero .stat-value {
+  color: var(--text-dim);
+}
+
+.stat-row-zero .stat-value {
+  font-weight: 400;
+}
+
+@media (max-width: 640px) {
+  .stat-row {
+    grid-template-columns: 1fr auto;
+  }
+  .stat-effect {
+    grid-column: 1 / -1;
+    text-align: left;
+    white-space: normal;
+  }
+}
+
+.resource-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.resource-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.resource-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.resource-name {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.resource-value {
+  font-size: 13px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.resource-bar {
+  height: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.resource-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+
+.resource-meta {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.resource-bonus {
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.aura-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 10px;
+}
+
+.aura-card {
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-left: 3px solid #4cd964;
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.aura-card-harmful {
+  border-left-color: var(--danger);
+}
+
+.aura-card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.aura-card-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.aura-card-stacks {
+  margin-left: 8px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.aura-card-kind {
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.aura-card-body {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.aura-card-mods {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.aura-card-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.skill-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.skill-table th {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.skill-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.skill-table tr:last-child td {
+  border-bottom: none;
+}
+
+.skill-table td:nth-child(2),
+.skill-table td:nth-child(3),
+.skill-table th:nth-child(2),
+.skill-table th:nth-child(3) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  width: 120px;
 }
 
 .content-card-header {
