@@ -111,13 +111,6 @@ export type Skill = {
   per_level_effects: SkillEffect[]
 }
 
-export type ResourceBonus = {
-  resource: string
-  value: number
-  modifier_type: 'Flat' | 'Percent'
-  description: string
-}
-
 export type AbilityBonus = {
   ability: string
   value: number
@@ -130,7 +123,6 @@ export type Race = {
   display_name: string
   description: string
   ability_bonuses: AbilityBonus[]
-  resource_bonuses: ResourceBonus[]
 }
 
 export type Faction = {
@@ -290,7 +282,7 @@ export async function listRaces(): Promise<Race[]> {
   const { data, error } = await supabase
     .schema('necro_content')
     .from('races')
-    .select('id, display_name, description, ability_bonuses, resource_bonuses')
+    .select('id, display_name, description, ability_bonuses')
     .order('display_name', { ascending: true })
   if (error) {
     console.error('Failed to load races:', error.message)
@@ -299,7 +291,6 @@ export async function listRaces(): Promise<Race[]> {
   return ((data as Race[] | null) ?? []).map((r) => ({
     ...r,
     ability_bonuses: Array.isArray(r.ability_bonuses) ? r.ability_bonuses : [],
-    resource_bonuses: Array.isArray(r.resource_bonuses) ? r.resource_bonuses : [],
   }))
 }
 

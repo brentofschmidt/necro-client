@@ -980,9 +980,6 @@ function RacesSection() {
           {r.ability_bonuses.length > 0 && (
             <BonusList title="Abilities" entries={r.ability_bonuses} />
           )}
-          {r.resource_bonuses.length > 0 && (
-            <BonusList title="Resources" entries={r.resource_bonuses} />
-          )}
         </article>
       ))}
     </ContentSection>
