@@ -3,11 +3,13 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import { fetchGameById, Game, GameStatus } from '../lib/games'
 import {
   Ability,
+  Action,
   Alignment,
   DamageType,
   Faction,
   getRealmStats,
   listAbilities,
+  listActions,
   listAlignments,
   listDamageTypes,
   listFactions,
@@ -16,6 +18,7 @@ import {
   listRealms,
   listResources,
   listSkills,
+  listSpells,
   listStats,
   listZones,
   PublicCharacter,
@@ -25,6 +28,7 @@ import {
   Resource,
   Skill,
   SkillCategory,
+  Spell,
   Stat,
   StatCategory,
   Zone,
@@ -38,6 +42,7 @@ type TabId =
   | 'resources'
   | 'stats'
   | 'actions'
+  | 'spells'
   | 'damage_types'
   | 'skills'
   | 'races'
@@ -56,6 +61,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'resources', label: 'Resources' },
   { id: 'stats', label: 'Stats' },
   { id: 'actions', label: 'Actions' },
+  { id: 'spells', label: 'Spells' },
   { id: 'damage_types', label: 'Damage Types' },
   { id: 'skills', label: 'Skills' },
   { id: 'races', label: 'Races' },
@@ -135,6 +141,13 @@ const TAB_ICONS: Record<TabId, ReactNode> = {
     </TabIcon>
   ),
   actions: (
+    <TabIcon>
+      <path d="M5 19L19 5" />
+      <path d="M16 5h4v4" />
+      <path d="M3 21l4-4" />
+    </TabIcon>
+  ),
+  spells: (
     <TabIcon>
       <path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z" />
     </TabIcon>
@@ -301,12 +314,10 @@ export function GamePage() {
       content = <StatsSection />
       break
     case 'actions':
-      content = (
-        <ComingSoonSection
-          title="Actions"
-          description="Active things characters do — spells, weapon strikes, utility moves. Pulled from necro_content.actions."
-        />
-      )
+      content = <ActionsSection />
+      break
+    case 'spells':
+      content = <SpellsSection />
       break
     case 'damage_types':
       content = <DamageTypesSection />
@@ -450,12 +461,14 @@ function ContentSection({
   description,
   items,
   emptyText,
+  headerExtra,
   children,
 }: {
   title: string
   description: string
   items: unknown[] | null
   emptyText: string
+  headerExtra?: ReactNode
   children: ReactNode
 }) {
   return (
@@ -464,6 +477,7 @@ function ContentSection({
         <h2>{title}</h2>
         <p>{description}</p>
       </header>
+      {headerExtra}
       {items === null ? (
         <p className="text-dim">Loading…</p>
       ) : items.length === 0 ? (
@@ -1372,12 +1386,173 @@ function ResourcesSection() {
   )
 }
 
+function formatSeconds(value: number): string {
+  if (value === 0) return 'Instant'
+  if (value < 1) return `${(value * 1000).toFixed(0)}ms`
+  return `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)}s`
+}
+
+function ActiveEffectCard({
+  effect,
+  variant,
+}: {
+  effect: Action | Spell
+  variant: 'action' | 'spell'
+}) {
+  const damage = 'damage' in effect ? effect.damage : 0
+  const damageSchool = 'damage_school' in effect ? effect.damage_school : null
+  const splashRadius = 'splash_radius' in effect ? effect.splash_radius : null
+
+  const isHeal = effect.is_heal
+  const damageLabel = isHeal
+    ? `Heals ${damage}`
+    : damage > 0
+      ? `${damage} damage`
+      : null
+
+  return (
+    <article className="content-card">
+      <header className="content-card-header">
+        <h3 className="content-card-title">
+          <span
+            className={`active-effect-mark active-effect-mark-${variant}`}
+            aria-hidden="true"
+          />
+          {effect.ability_name}
+        </h3>
+        <span className="content-card-id">{effect.asset_name}</span>
+      </header>
+      {effect.description && <p className="content-card-body">{effect.description}</p>}
+      {effect.effects.length > 0 && (
+        <ul className="content-card-rules">
+          {effect.effects
+            .filter((eff) => typeof eff.description === 'string' && eff.description)
+            .map((eff, i) => (
+              <li key={i}>{eff.description}</li>
+            ))}
+        </ul>
+      )}
+
+      <div className="content-card-stats">
+        {damageLabel && (
+          <span className={isHeal ? 'stat-pill stat-pill-heal' : 'stat-pill'}>
+            {damageLabel}
+          </span>
+        )}
+        {damageSchool && (
+          <span className="stat-pill stat-pill-muted">{damageSchool}</span>
+        )}
+        {effect.cast_time > 0 && (
+          <span className="stat-pill stat-pill-muted">
+            Cast {formatSeconds(effect.cast_time)}
+          </span>
+        )}
+        {effect.global_cooldown > 0 && effect.cast_time === 0 && (
+          <span className="stat-pill stat-pill-muted">
+            GCD {formatSeconds(effect.global_cooldown)}
+          </span>
+        )}
+        {effect.cooldown > 0 && (
+          <span className="stat-pill stat-pill-muted">
+            CD {formatSeconds(effect.cooldown)}
+          </span>
+        )}
+        {effect.resource_cost > 0 && (
+          <span className="stat-pill stat-pill-muted">
+            {effect.resource_cost} {effect.resource_type.toLowerCase()}
+          </span>
+        )}
+        {effect.range > 0 && (
+          <span className="stat-pill stat-pill-muted">{effect.range}m range</span>
+        )}
+      </div>
+
+      <div className="content-card-meta">
+        <span className="tag-muted">{effect.targeting}</span>
+        {splashRadius != null && splashRadius > 0 && (
+          <span className="tag-muted">AoE {splashRadius}m</span>
+        )}
+        {effect.required_weapon_types.map((w) => (
+          <span key={w} className="tag-muted">
+            {w}
+          </span>
+        ))}
+        {isHeal && <span className="tag">Heal</span>}
+      </div>
+    </article>
+  )
+}
+
+function matchesEffectQuery(effect: Action, query: string): boolean {
+  if (!query) return true
+  const haystack = `${effect.ability_name} ${effect.asset_name} ${effect.description}`.toLowerCase()
+  return haystack.includes(query.toLowerCase())
+}
+
+function ActionsSection() {
+  const actions = useAsyncList<Action>(() => listActions())
+  const [query, setQuery] = useState('')
+  const filtered = actions?.filter((a) => matchesEffectQuery(a, query)) ?? null
+
+  return (
+    <ContentSection
+      title="Actions"
+      description="Physical things characters do with weapons — strikes, blocks, shoves, technique-based moves. Damage comes from the equipped weapon."
+      items={filtered}
+      emptyText={query ? `No actions match "${query}".` : 'No actions defined yet.'}
+      headerExtra={
+        <input
+          type="search"
+          className="content-search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search actions…"
+          aria-label="Search actions"
+        />
+      }
+    >
+      {filtered?.map((a) => (
+        <ActiveEffectCard key={a.asset_name} effect={a} variant="action" />
+      ))}
+    </ContentSection>
+  )
+}
+
+function SpellsSection() {
+  const spells = useAsyncList<Spell>(() => listSpells())
+  const [query, setQuery] = useState('')
+  const filtered = spells?.filter((s) => matchesEffectQuery(s, query)) ?? null
+
+  return (
+    <ContentSection
+      title="Spells"
+      description="Magical effects — fire, frost, healing, summons, wards. Damage and school are intrinsic to the spell."
+      items={filtered}
+      emptyText={query ? `No spells match "${query}".` : 'No spells defined yet.'}
+      headerExtra={
+        <input
+          type="search"
+          className="content-search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search spells…"
+          aria-label="Search spells"
+        />
+      }
+    >
+      {filtered?.map((s) => (
+        <ActiveEffectCard key={s.asset_name} effect={s} variant="spell" />
+      ))}
+    </ContentSection>
+  )
+}
+
 function AbilitiesSection() {
   const abilities = useAsyncList<Ability>(() => listAbilities())
   return (
     <ContentSection
       title="Abilities"
-      description="The six D&D-style ability scores. Every character has a value in each; rolls and damage scale off them."
+      description="The six core ability scores every character carries. Each one drives different rolls, resources, and damage scaling."
       items={abilities}
       emptyText="No abilities defined yet."
     >

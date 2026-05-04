@@ -92,6 +92,37 @@ export type DamageType = {
   resistance_stat: string
 }
 
+export type ActionEffect = {
+  type: string
+  description: string
+  [key: string]: unknown
+}
+
+export type Action = {
+  asset_name: string
+  ability_name: string
+  description: string
+  type: string
+  targeting: string
+  resource_type: string
+  resource_cost: number
+  cooldown: number
+  cast_time: number
+  global_cooldown: number
+  range: number
+  requires_target: boolean
+  is_heal: boolean
+  required_weapon_types: string[]
+  effects: ActionEffect[]
+}
+
+export type Spell = Action & {
+  damage: number
+  damage_school: string | null
+  splash_radius: number | null
+  splash_damage_multiplier: number | null
+}
+
 export type SkillCategory = 'Proficiency' | 'Activity'
 
 export type SkillEffect = {
@@ -259,6 +290,43 @@ export async function listDamageTypes(): Promise<DamageType[]> {
     return []
   }
   return (data as DamageType[] | null) ?? []
+}
+
+const ACTION_COLUMNS =
+  'asset_name, ability_name, description, type, targeting, resource_type, resource_cost, cooldown, cast_time, global_cooldown, range, requires_target, is_heal, required_weapon_types, effects'
+
+export async function listActions(): Promise<Action[]> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .from('actions')
+    .select(ACTION_COLUMNS)
+    .order('ability_name', { ascending: true })
+  if (error) {
+    console.error('Failed to load actions:', error.message)
+    return []
+  }
+  return ((data as Action[] | null) ?? []).map((a) => ({
+    ...a,
+    required_weapon_types: Array.isArray(a.required_weapon_types) ? a.required_weapon_types : [],
+    effects: Array.isArray(a.effects) ? a.effects : [],
+  }))
+}
+
+export async function listSpells(): Promise<Spell[]> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .from('spells')
+    .select(`${ACTION_COLUMNS}, damage, damage_school, splash_radius, splash_damage_multiplier`)
+    .order('ability_name', { ascending: true })
+  if (error) {
+    console.error('Failed to load spells:', error.message)
+    return []
+  }
+  return ((data as Spell[] | null) ?? []).map((s) => ({
+    ...s,
+    required_weapon_types: Array.isArray(s.required_weapon_types) ? s.required_weapon_types : [],
+    effects: Array.isArray(s.effects) ? s.effects : [],
+  }))
 }
 
 export async function listSkills(): Promise<Skill[]> {

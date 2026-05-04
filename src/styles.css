@@ -1333,6 +1333,80 @@ body {
   gap: 3px;
 }
 
+.content-card-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.content-search {
+  width: 100%;
+  max-width: 360px;
+  padding: 8px 12px;
+  background: var(--bg-0);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  margin-bottom: 14px;
+  transition: border-color 0.15s ease;
+}
+
+.content-search:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+}
+
+.content-search::placeholder {
+  color: var(--text-dim);
+}
+
+.stat-pill {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: 'Consolas', 'Menlo', monospace;
+  font-weight: 600;
+  background: rgba(255, 59, 59, 0.10);
+  color: var(--accent);
+  border: 1px solid rgba(255, 59, 59, 0.3);
+}
+
+.stat-pill-muted {
+  background: var(--bg-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+
+.stat-pill-heal {
+  background: rgba(120, 220, 140, 0.10);
+  color: #78dc8c;
+  border: 1px solid rgba(120, 220, 140, 0.3);
+}
+
+.active-effect-mark {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 8px;
+  border-radius: 2px;
+  vertical-align: middle;
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 4px currentColor);
+}
+
+.active-effect-mark-action {
+  background: var(--accent);
+  color: var(--accent);
+}
+
+.active-effect-mark-spell {
+  background: #9b6fcf;
+  color: #9b6fcf;
+}
+
 .content-card-bonuses li {
   font-size: 12.5px;
   font-family: 'Consolas', 'Menlo', monospace;
