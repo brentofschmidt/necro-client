@@ -44,6 +44,7 @@ type TabId =
   | 'information'
   | 'characters'
   | 'items'
+  | 'item_types'
   | 'rarities'
   | 'abilities'
   | 'resources'
@@ -64,6 +65,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'information', label: 'Game Information' },
   { id: 'characters', label: 'Characters' },
   { id: 'items', label: 'Items' },
+  { id: 'item_types', label: 'Item Types' },
   { id: 'rarities', label: 'Rarities' },
   { id: 'abilities', label: 'Abilities' },
   { id: 'resources', label: 'Resources' },
@@ -127,6 +129,14 @@ const TAB_ICONS: Record<TabId, ReactNode> = {
       <path d="M3 7l9-4 9 4-9 4-9-4z" />
       <path d="M3 12l9 4 9-4" />
       <path d="M3 17l9 4 9-4" />
+    </TabIcon>
+  ),
+  item_types: (
+    <TabIcon>
+      <rect x="4" y="4" width="7" height="7" />
+      <rect x="13" y="4" width="7" height="7" />
+      <rect x="4" y="13" width="7" height="7" />
+      <rect x="13" y="13" width="7" height="7" />
     </TabIcon>
   ),
   rarities: (
@@ -311,6 +321,9 @@ export function GamePage() {
       break
     case 'items':
       content = <ItemsSection />
+      break
+    case 'item_types':
+      content = <ItemTypesSection />
       break
     case 'rarities':
       content = <RaritiesSection />
@@ -1507,11 +1520,36 @@ const ITEM_GROUP_ICONS: Record<string, ReactNode> = {
       <path d="M12 3l8 3v6c0 5-4 8-8 9-4-1-8-4-8-9V6z" />
     </>
   ),
+  Jewelry: (
+    <>
+      <path d="M12 4l4 5-4 11-4-11z" />
+      <path d="M8 9h8" />
+    </>
+  ),
   Tool: (
     <>
       <path d="M14 4l6 6-3 3-6-6z" />
       <path d="M11 7L4 14l3 3 7-7" />
       <path d="M4 14l-1 4 4-1" />
+    </>
+  ),
+  Consumable: (
+    <>
+      <path d="M9 3h6v3l3 5v8a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-8l3-5z" />
+      <path d="M6 14h12" />
+    </>
+  ),
+  Material: (
+    <>
+      <path d="M5 8l7-4 7 4-7 4z" />
+      <path d="M5 8v8l7 4" />
+      <path d="M19 8v8l-7 4" />
+    </>
+  ),
+  Container: (
+    <>
+      <path d="M5 8h14l-1 12H6z" />
+      <path d="M9 8V5a3 3 0 0 1 6 0v3" />
     </>
   ),
   Currency: (
@@ -1524,7 +1562,16 @@ const ITEM_GROUP_ICONS: Record<string, ReactNode> = {
   ),
 }
 
-const ITEM_GROUP_ORDER = ['Weapon', 'Armor', 'Tool', 'Currency']
+const ITEM_GROUP_ORDER = [
+  'Weapon',
+  'Armor',
+  'Jewelry',
+  'Tool',
+  'Consumable',
+  'Material',
+  'Container',
+  'Currency',
+]
 
 function ItemGroupIcon({ group }: { group: string }) {
   return (
@@ -1542,6 +1589,57 @@ function ItemGroupIcon({ group }: { group: string }) {
     >
       {ITEM_GROUP_ICONS[group] ?? <circle cx="12" cy="12" r="6" />}
     </svg>
+  )
+}
+
+function ItemTypesSection() {
+  const types = useAsyncList<ItemType>(() => listItemTypes())
+
+  return (
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Item Types</h2>
+        <p>
+          The catalog of item shapes the game knows about — what slot they equip
+          to, whether they stack, and which group the inventory UI files them under.
+        </p>
+      </header>
+
+      {types === null ? (
+        <p className="text-dim">Loading…</p>
+      ) : types.length === 0 ? (
+        <p className="text-dim">No item types defined yet.</p>
+      ) : (
+        <>
+          {ITEM_GROUP_ORDER.map((group) => {
+            const groupTypes = types.filter((t) => t.group === group)
+            if (groupTypes.length === 0) return null
+            return (
+              <div key={group} className="content-subgroup">
+                <h3 className="content-subgroup-heading">{group}</h3>
+                <div className="content-card-grid">
+                  {groupTypes.map((t) => (
+                    <article key={t.name} className="content-card">
+                      <header className="content-card-header">
+                        <h3 className="content-card-title">
+                          <ItemGroupIcon group={group} />
+                          {t.display_name}
+                        </h3>
+                        <span className="content-card-id">{t.name}</span>
+                      </header>
+                      <div className="content-card-meta">
+                        <span className="tag-muted">{t.equip_slot}</span>
+                        {t.stackable && <span className="tag-muted">Stackable</span>}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+        </>
+      )}
+    </section>
   )
 }
 
