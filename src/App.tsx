@@ -14,6 +14,7 @@ import { PublishArticle } from './components/PublishArticle'
 import { PublicProfile } from './components/PublicProfile'
 import { GamePage } from './components/GamePage'
 import { CharacterPage } from './components/CharacterPage'
+import { GuildPage } from './components/GuildPage'
 import {
   About,
   BugReports,
@@ -53,6 +54,10 @@ const router = createBrowserRouter([
           {
             path: '/g/:gameId/characters/:characterId/:tab?',
             element: <CharacterPage />,
+          },
+          {
+            path: '/g/:gameId/guilds/:guildId',
+            element: <GuildPage />,
           },
           { path: '/g/:gameId/:section?/:tab?', element: <GamePage /> },
           { path: '/about', element: <About /> },

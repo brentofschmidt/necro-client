@@ -213,6 +213,30 @@ body {
   padding-right: 0;
 }
 
+/* Sticky sidebar for the page-flow variant: when you scroll the page,
+   the tab list pins itself just below the navbar (top: 80px) so it's
+   always one click away. align-self: start prevents the grid from
+   stretching the column to full row height, which would defeat sticky.
+   max-height + overflow handle the rare case where the tab list is
+   taller than the viewport. */
+.settings-page-flow .settings-tabs {
+  position: sticky;
+  top: 80px;
+  align-self: start;
+  max-height: calc(100dvh - 100px);
+  overflow-y: auto;
+}
+
+@media (max-width: 720px) {
+  /* Single-column on mobile — sidebar becomes a horizontal row at the
+     top, so sticky just gets in the way. */
+  .settings-page-flow .settings-tabs {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
+  }
+}
+
 /* Top-level horizontal tabs for the game page (Game Info / Characters /
    Guilds / Leaderboards / Patch Notes). Sit just below the game title,
    underline the active tab in red. */
@@ -1341,6 +1365,17 @@ body {
   gap: 8px;
 }
 
+a.content-card.content-card-link {
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+a.content-card.content-card-link:hover {
+  border-color: var(--accent-dim);
+  transform: translateY(-1px);
+}
+
 .content-card-link {
   text-decoration: none;
   color: inherit;
@@ -1409,7 +1444,11 @@ body {
 .stat-value-meta {
   font-size: 11px;
   color: var(--text-dim);
-  margin-top: 2px;
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  align-items: flex-end;
 }
 
 .stats-categories {
@@ -1425,10 +1464,10 @@ body {
 
 .stat-row {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) 80px minmax(0, 2fr);
+  grid-template-columns: minmax(140px, 1fr) minmax(150px, max-content) minmax(0, 1.4fr);
   align-items: baseline;
   gap: 18px;
-  padding: 9px 0;
+  padding: 12px 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -1454,9 +1493,10 @@ body {
   font-size: 12px;
   color: var(--text-dim);
   text-align: right;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
 }
 
 .stat-row-zero .stat-name,
@@ -1475,65 +1515,20 @@ body {
   .stat-effect {
     grid-column: 1 / -1;
     text-align: left;
-    white-space: normal;
+    align-items: flex-start;
   }
 }
 
-.resource-list {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.resource-row {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.resource-row-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-}
-
-.resource-name {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  color: var(--text);
-}
-
-.resource-value {
-  font-size: 13px;
-  color: var(--text-dim);
-  font-variant-numeric: tabular-nums;
-}
-
-.resource-bar {
-  height: 12px;
-  background: var(--bg-2);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  overflow: hidden;
-}
-
-.resource-bar-fill {
-  height: 100%;
-  border-radius: 999px;
-  transition: width 0.2s ease;
-}
-
-.resource-meta {
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-.resource-bonus {
-  color: var(--accent);
-  font-size: 12px;
+.resource-color-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 8px;
+  vertical-align: middle;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 0 6px currentColor;
+  flex-shrink: 0;
 }
 
 .aura-list {

@@ -6,6 +6,7 @@ import {
   getPublicCharacterActiveAuras,
   getPublicCharacterCalculatedStats,
   getPublicCharacterEquipment,
+  getPublicCharacterGuild,
   getPublicCharacterResources,
   getPublicCharacterSkills,
   PublicCharacterAbilityScore,
@@ -13,8 +14,10 @@ import {
   PublicCharacterCalculatedStat,
   PublicCharacterDetail,
   PublicCharacterEquipmentSlot,
+  PublicCharacterGuild,
   PublicCharacterResource,
   PublicCharacterSkill,
+  ItemStatBonus,
 } from '../lib/necroContent'
 import { describeStatEffect } from '../lib/statEffects'
 import { formatRelativeShort } from '../lib/time'
@@ -67,6 +70,7 @@ const ABILITY_DRIVES: Record<string, AbilityDrive[]> = {
     (n) => ({ value: Math.floor((n - 10) / 2), isPercent: true, suffix: 'crit' }),
     (n) => ({ value: Math.floor(n / 4), isPercent: true, suffix: 'haste' }),
     (n) => ({ value: Math.floor((n - 10) / 2), isPercent: true, suffix: 'dodge' }),
+    (n) => ({ value: Math.floor(n / 4), isPercent: false, suffix: 'stamina regen' }),
   ],
   constitution: [
     (n) => ({ value: n, isPercent: false, suffix: 'armor' }),
@@ -75,6 +79,7 @@ const ABILITY_DRIVES: Record<string, AbilityDrive[]> = {
   intelligence: [
     (n) => ({ value: n * 2, isPercent: false, suffix: 'spell power' }),
     (n) => ({ value: Math.floor((n - 10) / 2), isPercent: true, suffix: 'spell crit' }),
+    (n) => ({ value: Math.floor(n / 4), isPercent: false, suffix: 'mana regen' }),
   ],
   wisdom: [
     (n) => ({ value: n * 2, isPercent: false, suffix: 'healing power' }),
@@ -237,11 +242,13 @@ export function CharacterPage() {
 
 function OverviewSection({ character }: { character: PublicCharacterDetail }) {
   const characterId = character.id
+  const { gameId } = useParams<{ gameId: string }>()
 
   const [scores, setScores] = useState<PublicCharacterAbilityScore[] | null>(null)
   const [stats, setStats] = useState<PublicCharacterCalculatedStat[] | null>(null)
   const [resources, setResources] = useState<PublicCharacterResource[] | null>(null)
   const [auras, setAuras] = useState<PublicCharacterActiveAura[] | null>(null)
+  const [guild, setGuild] = useState<PublicCharacterGuild | null | undefined>(undefined)
 
   useEffect(() => {
     let cancelled = false
@@ -256,6 +263,9 @@ function OverviewSection({ character }: { character: PublicCharacterDetail }) {
     })
     getPublicCharacterActiveAuras(characterId).then((rows) => {
       if (!cancelled) setAuras(rows)
+    })
+    getPublicCharacterGuild(characterId).then((g) => {
+      if (!cancelled) setGuild(g)
     })
     return () => {
       cancelled = true
@@ -295,6 +305,34 @@ function OverviewSection({ character }: { character: PublicCharacterDetail }) {
 
           <dt>Last Zone</dt>
           <dd>{character.last_zone || '—'}</dd>
+
+          <dt>Guild</dt>
+          <dd>
+            {guild === undefined ? (
+              <span className="text-dim">Loading…</span>
+            ) : guild === null ? (
+              '—'
+            ) : (
+              <>
+                {gameId ? (
+                  <Link
+                    to={`/g/${gameId}/guilds/${guild.guild_id}`}
+                    className="character-back-link"
+                  >
+                    {guild.guild_name}
+                  </Link>
+                ) : (
+                  guild.guild_name
+                )}
+                <span className="text-dim">
+                  {' · '}
+                  {guild.rank_name}
+                  {' · '}
+                  {guild.member_count} member{guild.member_count === 1 ? '' : 's'}
+                </span>
+              </>
+            )}
+          </dd>
         </dl>
       </section>
 
@@ -307,7 +345,7 @@ function OverviewSection({ character }: { character: PublicCharacterDetail }) {
         ) : resources.length === 0 ? (
           <p className="text-dim">No resource pools set.</p>
         ) : (
-          <div className="resource-list">
+          <div className="stat-list">
             {resources.map((r) => (
               <ResourceRow key={r.type} resource={r} />
             ))}
@@ -367,6 +405,7 @@ function OverviewSection({ character }: { character: PublicCharacterDetail }) {
 
 function AbilityRow({ score }: { score: PublicCharacterAbilityScore }) {
   const total = Math.round(score.total_value)
+  const base = Math.round(score.base_value)
   const eq = Math.round(score.equipment_bonus_value)
   const au = Math.round(score.aura_bonus_value)
   const mod = Math.floor((total - 10) / 2)
@@ -374,11 +413,11 @@ function AbilityRow({ score }: { score: PublicCharacterAbilityScore }) {
   const drives = (ABILITY_DRIVES[score.ability] ?? [])
     .map((fn) => fn(total))
     .filter((d) => d.value !== 0)
-  const effect = drives.length > 0 ? drives.map(formatDrive).join(' · ') : '—'
 
-  // Compact "from gear/aura" annotation under the value cell, only when
-  // either source is non-zero.
-  const sources: string[] = []
+  // Score-point breakdown so base + gear + aura = total. Modifier (+N
+  // small label next to the total) is a derived D&D-style number,
+  // floor((score-10)/2), and intentionally doesn't appear in this sum.
+  const sources: string[] = [`Base ${base}`]
   if (eq !== 0) sources.push(`${eq > 0 ? '+' : ''}${eq} gear`)
   if (au !== 0) sources.push(`${au > 0 ? '+' : ''}${au} aura`)
 
@@ -390,51 +429,71 @@ function AbilityRow({ score }: { score: PublicCharacterAbilityScore }) {
           <span className="stat-value">{total}</span>
           <span className="stat-mod">{mod >= 0 ? `+${mod}` : mod}</span>
         </div>
-        {sources.length > 0 && (
-          <div className="stat-value-meta">{sources.join(' · ')}</div>
+        <div className="stat-value-meta">
+          {sources.map((s, i) => (
+            <span key={i}>{s}</span>
+          ))}
+        </div>
+      </div>
+      <div className="stat-effect">
+        {drives.length === 0 ? (
+          <span>—</span>
+        ) : (
+          drives.map((d, i) => <span key={i}>{formatDrive(d)}</span>)
         )}
       </div>
-      <div className="stat-effect">{effect}</div>
     </div>
   )
 }
 
 function ResourceRow({ resource }: { resource: PublicCharacterResource }) {
-  const pct =
-    resource.max_value > 0
-      ? Math.max(0, Math.min(100, (resource.current_value / resource.max_value) * 100))
-      : 0
   const color = resource.display_color ?? 'var(--accent)'
-  const bonus = Math.round(resource.bonus_max_value)
+  const ability = Math.round(resource.ability_bonus_max_value)
+  const aura = Math.round(resource.bonus_max_value)
+  const current = Math.round(resource.current_value)
+  const max = Math.round(resource.max_value)
+  const base = Math.round(resource.base_max_value)
+
+  const regen =
+    resource.regen_rate > 0
+      ? resource.regen_delay > 0
+        ? `Regen ${resource.regen_rate}/s · ${resource.regen_delay}s OOC`
+        : `Regen ${resource.regen_rate}/s`
+      : '—'
+
+  // Breakdown so base + abilities + aura = max. Always show base; show
+  // abilities and aura only when they contribute something.
+  const sources: string[] = [`Base ${base}`]
+  if (ability !== 0) sources.push(`${ability > 0 ? '+' : ''}${ability} abilities`)
+  if (aura !== 0) sources.push(`${aura > 0 ? '+' : ''}${aura} aura`)
+
   return (
-    <div className="resource-row">
-      <div className="resource-row-head">
-        <span className="resource-name">
-          {resource.display_name ?? capitalize(resource.type)}
-        </span>
-        <span className="resource-value">
-          {Math.round(resource.current_value)} / {Math.round(resource.max_value)}
-          {bonus !== 0 && (
-            <span className="resource-bonus">
-              {' ('}
-              {bonus > 0 ? `+${bonus}` : bonus} aura
-              {')'}
-            </span>
-          )}
-        </span>
-      </div>
-      <div className="resource-bar">
-        <div
-          className="resource-bar-fill"
-          style={{ width: `${pct}%`, background: color }}
+    <div className="stat-row">
+      <div className="stat-name">
+        <span
+          className="resource-color-dot"
+          style={{ background: color }}
+          aria-hidden="true"
         />
+        {resource.display_name ?? capitalize(resource.type)}
       </div>
-      {resource.regen_rate > 0 && (
-        <div className="resource-meta">
-          Regenerates {resource.regen_rate}/s
-          {resource.regen_delay > 0 && ` after ${resource.regen_delay}s out of combat`}
+      <div className="stat-value-cell">
+        <div className="stat-value-line">
+          <span className="stat-value">
+            {current}/{max}
+          </span>
         </div>
-      )}
+        {sources.length > 1 && (
+          <div className="stat-value-meta">
+            {sources.map((s, i) => (
+              <span key={i}>{s}</span>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="stat-effect">
+        <span>{regen}</span>
+      </div>
     </div>
   )
 }
@@ -473,31 +532,108 @@ function EquipmentSection({ characterId }: { characterId: string }) {
                 (SLOT_ORDER[a.slot] ?? 99) - (SLOT_ORDER[b.slot] ?? 99),
             )
             .map((e) => (
-              <article key={e.slot} className="content-card">
-                <header className="content-card-header">
-                  <h3
-                    className="content-card-title"
-                    style={{
-                      color: e.item_rarity
-                        ? RARITY_COLORS[e.item_rarity]
-                        : undefined,
-                    }}
-                  >
-                    {e.item_name ?? e.item_id}
-                  </h3>
-                  <span className="content-card-id">{e.slot}</span>
-                </header>
-                <div className="content-card-meta">
-                  {e.item_rarity && (
-                    <span className="tag-muted">{capitalize(e.item_rarity)}</span>
-                  )}
-                  {e.item_type && <span className="tag-muted">{e.item_type}</span>}
-                </div>
-              </article>
+              <EquipmentCard key={e.slot} item={e} />
             ))}
         </div>
       )}
     </section>
+  )
+}
+
+function EquipmentCard({ item }: { item: PublicCharacterEquipmentSlot }) {
+  const isWeapon =
+    item.weapon_min_damage != null && item.weapon_max_damage != null
+  const titleColor = item.item_rarity ? RARITY_COLORS[item.item_rarity] : undefined
+
+  return (
+    <article className="content-card">
+      <header className="content-card-header">
+        <h3 className="content-card-title" style={{ color: titleColor }}>
+          {item.item_name ?? item.item_id}
+        </h3>
+        <span className="content-card-id">{item.slot}</span>
+      </header>
+
+      {item.description && (
+        <p className="content-card-body">{item.description}</p>
+      )}
+
+      {(isWeapon || item.weapon_speed != null) && (
+        <div className="content-card-stats">
+          {isWeapon && (
+            <span className="stat-pill">
+              {item.weapon_min_damage}–{item.weapon_max_damage} dmg
+            </span>
+          )}
+          {item.weapon_speed != null && item.weapon_speed > 0 && (
+            <span className="stat-pill stat-pill-muted">
+              Spd {item.weapon_speed}s
+            </span>
+          )}
+        </div>
+      )}
+
+      {item.ability_bonuses.length > 0 && (
+        <BonusList title="Abilities" entries={item.ability_bonuses} />
+      )}
+
+      {item.stats.length > 0 && (
+        <BonusList
+          title="Stats"
+          entries={item.stats.map((s) => ({
+            value: s.value,
+            description: formatItemStatBonus(s),
+          }))}
+        />
+      )}
+
+      <div className="content-card-meta">
+        {item.item_rarity && (
+          <span className="tag-muted">{capitalize(item.item_rarity)}</span>
+        )}
+        {item.item_type && <span className="tag-muted">{item.item_type}</span>}
+      </div>
+    </article>
+  )
+}
+
+function formatItemStatBonus(s: ItemStatBonus): string {
+  const sign = s.value > 0 ? '+' : ''
+  const suffix = s.modifierType === 'Percent' ? '%' : ''
+  const label = s.stat
+    .split('_')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
+  return `${sign}${s.value}${suffix} ${label}`
+}
+
+function BonusList({
+  title,
+  entries,
+}: {
+  title: string
+  entries: { value: number; description: string }[]
+}) {
+  return (
+    <div className="content-card-bonus-group">
+      <div className="content-card-bonus-heading">{title}</div>
+      <ul className="content-card-bonuses">
+        {entries.map((b, i) => (
+          <li
+            key={i}
+            className={
+              b.value > 0
+                ? 'content-card-bonus-positive'
+                : b.value < 0
+                  ? 'content-card-bonus-negative'
+                  : ''
+            }
+          >
+            {b.description}
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }
 

@@ -44,12 +44,63 @@ export type PublicCharacterDetail = {
   realm_name: string | null
 }
 
+export type ItemStatBonus = {
+  stat: string
+  value: number
+  modifierType?: string
+}
+
+export type PublicGuild = {
+  guild_id: string
+  name: string
+  motd: string
+  info: string
+  level: number
+  realm_id: string
+  realm_name: string | null
+  member_count: number
+  created_at: string
+}
+
+export type PublicGuildDetail = PublicGuild & {
+  xp: number
+  member_limit: number
+  disbanded_at: string | null
+}
+
+export type PublicGuildMember = {
+  character_id: string
+  character_name: string
+  race: string
+  level: number
+  rank_index: number
+  rank_name: string
+  note: string
+  joined_at: string
+}
+
+export type PublicCharacterGuild = {
+  guild_id: string
+  guild_name: string
+  motd: string
+  rank_index: number
+  rank_name: string
+  joined_at: string
+  member_count: number
+}
+
 export type PublicCharacterEquipmentSlot = {
   slot: string
   item_id: string
   item_name: string | null
   item_rarity: string | null
   item_type: string | null
+  description: string | null
+  weapon_min_damage: number | null
+  weapon_max_damage: number | null
+  weapon_speed: number | null
+  ability_bonuses: AbilityBonus[]
+  stats: ItemStatBonus[]
 }
 
 export type PublicCharacterAbilityScore = {
@@ -86,6 +137,7 @@ export type PublicCharacterResource = {
   display_color: string | null
   sort_order: number | null
   base_max_value: number
+  ability_bonus_max_value: number
   bonus_max_value: number
   max_value: number
   current_value: number
@@ -435,6 +487,70 @@ export async function getPublicCharacter(
   return rows[0] ?? null
 }
 
+export async function getPublicGuildDetail(
+  id: string,
+): Promise<PublicGuildDetail | null> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .rpc('get_public_guild_detail', { p_guild_id: id })
+  if (error) {
+    console.error('Failed to load guild:', error.message)
+    return null
+  }
+  const row = Array.isArray(data) ? data[0] : data
+  if (!row) return null
+  return {
+    ...row,
+    member_count: Number(row.member_count),
+    xp: Number(row.xp),
+  } as PublicGuildDetail
+}
+
+export async function listPublicGuildMembers(
+  id: string,
+): Promise<PublicGuildMember[]> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .rpc('list_public_guild_members', { p_guild_id: id })
+  if (error) {
+    console.error('Failed to load guild members:', error.message)
+    return []
+  }
+  return (data as PublicGuildMember[] | null) ?? []
+}
+
+export async function listPublicGuilds(): Promise<PublicGuild[]> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .rpc('list_public_guilds')
+  if (error) {
+    console.error('Failed to load guilds:', error.message)
+    return []
+  }
+  return ((data as PublicGuild[] | null) ?? []).map((g) => ({
+    ...g,
+    member_count: Number(g.member_count),
+  }))
+}
+
+export async function getPublicCharacterGuild(
+  id: string,
+): Promise<PublicCharacterGuild | null> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .rpc('get_public_character_guild', { p_character_id: id })
+  if (error) {
+    console.error('Failed to load guild:', error.message)
+    return null
+  }
+  const row = Array.isArray(data) ? data[0] : data
+  if (!row) return null
+  return {
+    ...row,
+    member_count: Number(row.member_count),
+  } as PublicCharacterGuild
+}
+
 export async function getPublicCharacterEquipment(
   id: string,
 ): Promise<PublicCharacterEquipmentSlot[]> {
@@ -445,7 +561,11 @@ export async function getPublicCharacterEquipment(
     console.error('Failed to load equipment:', error.message)
     return []
   }
-  return (data as PublicCharacterEquipmentSlot[] | null) ?? []
+  return ((data as PublicCharacterEquipmentSlot[] | null) ?? []).map((e) => ({
+    ...e,
+    ability_bonuses: Array.isArray(e.ability_bonuses) ? e.ability_bonuses : [],
+    stats: Array.isArray(e.stats) ? e.stats : [],
+  }))
 }
 
 export async function getPublicCharacterAbilityScores(

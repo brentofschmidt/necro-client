@@ -19,6 +19,7 @@ import {
   listItems,
   listItemTypes,
   listPublicCharacters,
+  listPublicGuilds,
   listRaces,
   listRarities,
   listRealms,
@@ -29,6 +30,7 @@ import {
   listStats,
   listZones,
   PublicCharacter,
+  PublicGuild,
   Race,
   Rarity,
   Realm,
@@ -445,12 +447,7 @@ export function GamePage() {
       sectionContent = <CharactersSection />
       break
     case 'guilds':
-      sectionContent = (
-        <ComingSoonSection
-          title="Guilds"
-          description="Public guild directory — rosters, ranks, and recruitment status."
-        />
-      )
+      sectionContent = <GuildsSection />
       break
     case 'leaderboards':
       sectionContent = (
@@ -2281,6 +2278,74 @@ function ZonesSection() {
           </div>
         </article>
       ))}
+    </ContentSection>
+  )
+}
+
+function GuildsSection() {
+  const guilds = useAsyncList<PublicGuild>(() => listPublicGuilds())
+  const [query, setQuery] = useState('')
+  const { gameId } = useParams<{ gameId: string }>()
+
+  const filtered =
+    guilds?.filter((g) => {
+      if (!query) return true
+      const haystack = `${g.name} ${g.motd} ${g.info} ${g.realm_name ?? ''}`.toLowerCase()
+      return haystack.includes(query.toLowerCase())
+    }) ?? null
+
+  return (
+    <ContentSection
+      title="Guilds"
+      description="Public directory of guilds across all realms — names, banners, levels, and recruitment status."
+      items={filtered}
+      emptyText={query ? `No guilds match "${query}".` : 'No guilds yet.'}
+      headerExtra={
+        <input
+          type="search"
+          className="content-search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search guilds…"
+          aria-label="Search guilds"
+        />
+      }
+    >
+      {filtered?.map((g) => {
+        const inner = (
+          <>
+            <header className="content-card-header">
+              <h3 className="content-card-title">{g.name}</h3>
+              <span className="content-card-id">Lv {g.level}</span>
+            </header>
+            {g.motd && (
+              <p className="content-card-body">
+                <em>“{g.motd}”</em>
+              </p>
+            )}
+            {g.info && <p className="content-card-body">{g.info}</p>}
+            <div className="content-card-meta">
+              {g.realm_name && <span className="tag-muted">{g.realm_name}</span>}
+              <span className="tag-muted">
+                {g.member_count} member{g.member_count === 1 ? '' : 's'}
+              </span>
+            </div>
+          </>
+        )
+        return gameId ? (
+          <Link
+            key={g.guild_id}
+            to={`/g/${gameId}/guilds/${g.guild_id}`}
+            className="content-card content-card-link"
+          >
+            {inner}
+          </Link>
+        ) : (
+          <article key={g.guild_id} className="content-card">
+            {inner}
+          </article>
+        )
+      })}
     </ContentSection>
   )
 }
