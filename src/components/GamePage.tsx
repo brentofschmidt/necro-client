@@ -2,6 +2,8 @@ import { ReactNode, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { fetchGameById, Game, GameStatus } from '../lib/games'
 import { formatRelativeShort } from '../lib/time'
+import { DamageCalculator } from './DamageCalculator'
+import { DamageFlowchartSection } from './DamageFlowchart'
 import { DataTable, DataTableColumn } from './DataTable'
 import {
   Ability,
@@ -58,6 +60,7 @@ type SectionId =
   | 'guilds'
   | 'leaderboards'
   | 'patch-notes'
+  | 'dev'
 
 // "Information" tabs: catalogs / descriptors / world-rules — the
 // reference material a player consults to understand the game's shape.
@@ -88,6 +91,10 @@ type DatabaseTabId =
   | 'recipes'
   | 'actions'
 
+// "Dev" tabs: design tools and dev-only diagrams. Currently houses the
+// damage flowchart + calculator; expand as more debug surfaces land.
+type DevTabId = 'damage-flowchart' | 'damage-calculator'
+
 const SECTIONS: { id: SectionId; label: string }[] = [
   { id: 'game', label: 'Game Information' },
   { id: 'database', label: 'Database' },
@@ -95,6 +102,7 @@ const SECTIONS: { id: SectionId; label: string }[] = [
   { id: 'guilds', label: 'Guilds' },
   { id: 'leaderboards', label: 'Leaderboards' },
   { id: 'patch-notes', label: 'Patch Notes' },
+  { id: 'dev', label: 'Dev' },
 ]
 
 const GAME_INFO_TABS: { id: GameInfoTabId; label: string }[] = [
@@ -123,9 +131,15 @@ const DATABASE_TABS: { id: DatabaseTabId; label: string }[] = [
   { id: 'actions', label: 'Actions' },
 ]
 
+const DEV_TABS: { id: DevTabId; label: string }[] = [
+  { id: 'damage-flowchart', label: 'Damage Flowchart' },
+  { id: 'damage-calculator', label: 'Damage Calculator' },
+]
+
 const DEFAULT_SECTION: SectionId = 'game'
 const DEFAULT_GAME_INFO_TAB: GameInfoTabId = 'overview'
 const DEFAULT_DATABASE_TAB: DatabaseTabId = 'items'
+const DEFAULT_DEV_TAB: DevTabId = 'damage-flowchart'
 
 function isSectionId(value: string | null | undefined): value is SectionId {
   return SECTIONS.some((s) => s.id === value)
@@ -137,6 +151,10 @@ function isGameInfoTabId(value: string | null | undefined): value is GameInfoTab
 
 function isDatabaseTabId(value: string | null | undefined): value is DatabaseTabId {
   return DATABASE_TABS.some((t) => t.id === value)
+}
+
+function isDevTabId(value: string | null | undefined): value is DevTabId {
+  return DEV_TABS.some((t) => t.id === value)
 }
 
 function TabIcon({ children }: { children: ReactNode }) {
@@ -158,7 +176,7 @@ function TabIcon({ children }: { children: ReactNode }) {
   )
 }
 
-const TAB_ICONS: Record<GameInfoTabId | DatabaseTabId, ReactNode> = {
+const TAB_ICONS: Record<GameInfoTabId | DatabaseTabId | DevTabId, ReactNode> = {
   overview: (
     <TabIcon>
       <circle cx="12" cy="12" r="9" />
@@ -295,6 +313,29 @@ const TAB_ICONS: Record<GameInfoTabId | DatabaseTabId, ReactNode> = {
       <circle cx="7" cy="13.5" r="0.5" />
     </TabIcon>
   ),
+  'damage-flowchart': (
+    <TabIcon>
+      <rect x="4" y="3" width="6" height="4" rx="1" />
+      <rect x="14" y="3" width="6" height="4" rx="1" />
+      <rect x="9" y="10" width="6" height="4" rx="1" />
+      <rect x="9" y="17" width="6" height="4" rx="1" />
+      <path d="M7 7v3h5" />
+      <path d="M17 7v3h-5" />
+      <path d="M12 14v3" />
+    </TabIcon>
+  ),
+  'damage-calculator': (
+    <TabIcon>
+      <rect x="5" y="3" width="14" height="18" rx="2" />
+      <rect x="8" y="6" width="8" height="3" />
+      <circle cx="9" cy="13" r="0.5" />
+      <circle cx="12" cy="13" r="0.5" />
+      <circle cx="15" cy="13" r="0.5" />
+      <circle cx="9" cy="17" r="0.5" />
+      <circle cx="12" cy="17" r="0.5" />
+      <circle cx="15" cy="17" r="0.5" />
+    </TabIcon>
+  ),
 }
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
@@ -331,6 +372,10 @@ export function GamePage() {
     ? paramTab
     : DEFAULT_DATABASE_TAB
 
+  const activeDevTab: DevTabId = isDevTabId(paramTab)
+    ? paramTab
+    : DEFAULT_DEV_TAB
+
   // Remember the last sub-tab the user looked at within each section so
   // switching away to e.g. Characters and back to Game Information /
   // Database lands them on the same sub-tab they had open instead of the
@@ -339,6 +384,7 @@ export function GamePage() {
     useState<GameInfoTabId>(DEFAULT_GAME_INFO_TAB)
   const [lastDatabaseTab, setLastDatabaseTab] =
     useState<DatabaseTabId>(DEFAULT_DATABASE_TAB)
+  const [lastDevTab, setLastDevTab] = useState<DevTabId>(DEFAULT_DEV_TAB)
 
   useEffect(() => {
     if (paramSection === 'game' && isGameInfoTabId(paramTab)) {
@@ -346,6 +392,9 @@ export function GamePage() {
     }
     if (paramSection === 'database' && isDatabaseTabId(paramTab)) {
       setLastDatabaseTab(paramTab)
+    }
+    if (paramSection === 'dev' && isDevTabId(paramTab)) {
+      setLastDevTab(paramTab)
     }
   }, [paramSection, paramTab])
 
@@ -356,7 +405,7 @@ export function GamePage() {
     // user back to the top of the new section / sub-tab instead of leaving
     // them wherever they last scrolled.
     window.scrollTo({ top: 0, behavior: 'auto' })
-  }, [activeSection, activeGameInfoTab, activeDatabaseTab])
+  }, [activeSection, activeGameInfoTab, activeDatabaseTab, activeDevTab])
 
   useEffect(() => {
     if (!gameId) {
@@ -399,9 +448,14 @@ export function GamePage() {
       })
       return
     }
+    if (paramSection === 'dev' && !isDevTabId(paramTab)) {
+      navigate(`/g/${gameId}/dev/${DEFAULT_DEV_TAB}`, { replace: true })
+      return
+    }
     if (
       paramSection !== 'game' &&
       paramSection !== 'database' &&
+      paramSection !== 'dev' &&
       paramTab
     ) {
       navigate(`/g/${gameId}/${paramSection}`, { replace: true })
@@ -414,6 +468,8 @@ export function GamePage() {
       navigate(`/g/${gameId}/game/${lastGameInfoTab}`, { replace: true })
     } else if (id === 'database') {
       navigate(`/g/${gameId}/database/${lastDatabaseTab}`, { replace: true })
+    } else if (id === 'dev') {
+      navigate(`/g/${gameId}/dev/${lastDevTab}`, { replace: true })
     } else {
       navigate(`/g/${gameId}/${id}`, { replace: true })
     }
@@ -427,6 +483,11 @@ export function GamePage() {
   function setDatabaseTab(id: DatabaseTabId) {
     if (!gameId) return
     navigate(`/g/${gameId}/database/${id}`, { replace: true })
+  }
+
+  function setDevTab(id: DevTabId) {
+    if (!gameId) return
+    navigate(`/g/${gameId}/dev/${id}`, { replace: true })
   }
 
   if (loadState === 'loading') {
@@ -579,6 +640,39 @@ export function GamePage() {
         />
       )
       break
+    case 'dev': {
+      let devContent: ReactNode = null
+      switch (activeDevTab) {
+        case 'damage-flowchart':
+          devContent = <DamageFlowchartSection />
+          break
+        case 'damage-calculator':
+          devContent = <DamageCalculator />
+          break
+      }
+      sectionContent = (
+        <div className="settings-layout">
+          <nav className="settings-tabs" aria-label={`${game.name} dev tools`}>
+            {DEV_TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className={`settings-tab ${activeDevTab === t.id ? 'active' : ''}`}
+                onClick={() => setDevTab(t.id)}
+                aria-current={activeDevTab === t.id ? 'page' : undefined}
+              >
+                {TAB_ICONS[t.id]}
+                <span>{t.label}</span>
+              </button>
+            ))}
+          </nav>
+          <div className="settings-content" ref={contentRef}>
+            {devContent}
+          </div>
+        </div>
+      )
+      break
+    }
   }
 
   return (

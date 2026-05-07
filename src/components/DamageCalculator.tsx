@@ -2,11 +2,15 @@ import { ReactNode, useEffect, useMemo, useState } from 'react'
 import {
   getPublicCharacter,
   getPublicCharacterCalculatedStats,
+  getPublicCharacterSkills,
   listPublicCharacters,
+  listSkills,
   listSpells,
   PublicCharacter,
   PublicCharacterCalculatedStat,
   PublicCharacterDetail,
+  PublicCharacterSkill,
+  Skill,
   Spell,
 } from '../lib/necroContent'
 
@@ -21,12 +25,24 @@ import {
 type SimpleCharacter = {
   detail: PublicCharacterDetail
   stats: PublicCharacterCalculatedStat[]
+  skills: PublicCharacterSkill[]
 }
 
 // Mitigation constant. Higher K means armor/resist matter less per point.
 // WoW historically used scaling-by-attacker-level constants; this is a flat
 // placeholder, easy to swap once the formula stabilises.
 const MITIGATION_K = 100
+
+// Cap that level / MAX_SKILL_LEVEL is divided by to produce the damage-roll
+// floor. Matches max_level on the seeded weapon proficiencies (migration 0012).
+const MAX_SKILL_LEVEL = 99
+
+// Floor used when no weapon proficiency applies — spells, generic abilities.
+// 0 = full uniform 0..max with min 1 (untrained casters).
+// 0.5 = roll between 50% and 100% of max ("reliable but variable").
+// 1.0 = always max (deterministic).
+// Single knob so the design can shift without code changes.
+const SPELL_PROFICIENCY_FLOOR = 0
 
 function statValue(stats: PublicCharacterCalculatedStat[], id: string): number {
   return stats.find((s) => s.id === id)?.value ?? 0
@@ -37,19 +53,46 @@ function fmt(n: number, digits = 1): string {
   return n.toFixed(digits)
 }
 
-// Loads detail + calculated stats together so the picker handlers stay simple.
+// Loads detail + calculated stats + skill levels together so the picker
+// handlers stay simple. Skills feed the proficiency-driven damage roll
+// curve in buildPipeline.
 async function loadCharacter(id: string): Promise<SimpleCharacter | null> {
-  const [detail, stats] = await Promise.all([
+  const [detail, stats, skills] = await Promise.all([
     getPublicCharacter(id),
     getPublicCharacterCalculatedStats(id),
+    getPublicCharacterSkills(id),
   ])
   if (!detail) return null
-  return { detail, stats }
+  return { detail, stats, skills }
+}
+
+// Resolves the attacker's weapon proficiency level for the action being used.
+// `spell.required_weapon_types[0]` (e.g. 'sword') matches against the catalog
+// skill row whose `item_types[0]` is the same value (e.g. 'swords' / 'Sword').
+// Returns null when the action has no weapon-type gate (spells, generic
+// abilities) — the caller falls back to SPELL_PROFICIENCY_FLOOR in that case.
+function proficiencyLevelFor(
+  attacker: SimpleCharacter,
+  spell: Spell,
+  skillsCatalog: Skill[] | null,
+): { level: number; skillName: string } | null {
+  const weaponType = spell.required_weapon_types?.[0]
+  if (!weaponType || !skillsCatalog) return null
+  const catalogEntry = skillsCatalog.find(
+    (s) => s.category === 'Proficiency' && s.item_types.includes(weaponType),
+  )
+  if (!catalogEntry) return null
+  const charSkill = attacker.skills.find((s) => s.skill === catalogEntry.name)
+  return {
+    level: charSkill?.level ?? 0,
+    skillName: catalogEntry.display_name ?? catalogEntry.name,
+  }
 }
 
 export function DamageCalculator() {
   const [characters, setCharacters] = useState<PublicCharacter[] | null>(null)
   const [spells, setSpells] = useState<Spell[] | null>(null)
+  const [skillsCatalog, setSkillsCatalog] = useState<Skill[] | null>(null)
 
   const [attackerId, setAttackerId] = useState<string>('')
   const [defenderId, setDefenderId] = useState<string>('')
@@ -61,11 +104,16 @@ export function DamageCalculator() {
   const [forceCrit, setForceCrit] = useState(false)
   const [forceHit, setForceHit] = useState(true) // assume hit by default
   const [powerCoefficient, setPowerCoefficient] = useState(1.0)
+  // Bumping rollSeed forces buildPipeline's useMemo to re-run, which
+  // re-rolls the damage sample. Reroll button writes to it.
+  const [rollSeed, setRollSeed] = useState(0)
 
-  // Boot: fetch the option lists for the three pickers.
+  // Boot: fetch the option lists for the three pickers + the skills
+  // catalog (needed to map action.required_weapon_types[0] → proficiency).
   useEffect(() => {
     listPublicCharacters().then(setCharacters)
     listSpells().then(setSpells)
+    listSkills().then(setSkillsCatalog)
   }, [])
 
   // When attacker id changes, refetch their stats.
@@ -190,9 +238,12 @@ export function DamageCalculator() {
           attacker={attacker!}
           defender={defender!}
           spell={spell!}
+          skillsCatalog={skillsCatalog}
           forceCrit={forceCrit}
           forceHit={forceHit}
           powerCoefficient={powerCoefficient}
+          rollSeed={rollSeed}
+          onReroll={() => setRollSeed((s) => s + 1)}
         />
       ) : (
         <div className="dmg-placeholder">
@@ -321,12 +372,16 @@ type Step = {
   output: number
   outputLabel?: string
   skipped?: string
+  // Optional min/mean/max triple so the renderer can show the full damage
+  // roll range alongside the sampled value (used by Damage roll + Final).
+  range?: { min: number; mean: number; max: number }
 }
 
 function buildPipeline(
   attacker: SimpleCharacter,
   defender: SimpleCharacter,
   spell: Spell,
+  skillsCatalog: Skill[] | null,
   opts: { forceCrit: boolean; forceHit: boolean; powerCoefficient: number },
 ): Step[] {
   const steps: Step[] = []
@@ -380,7 +435,7 @@ function buildPipeline(
         output: 0,
         outputLabel: 'MISS',
       })
-      return appendFinal(steps, value, isHeal)
+      return appendFinal(steps, value, isHeal, null)
     } else {
       steps.push({
         title: '3. Hit roll',
@@ -468,10 +523,55 @@ function buildPipeline(
     })
   }
 
-  return appendFinal(steps, value, isHeal)
+  // 6. Damage roll — proficiency-driven curve. Heals skip this entirely;
+  //    they stay deterministic at full computed value.
+  let range: { min: number; mean: number; max: number } | null = null
+  if (!isHeal && value > 0) {
+    const prof = proficiencyLevelFor(attacker, spell, skillsCatalog)
+    const floor =
+      prof !== null
+        ? Math.max(0, Math.min(1, prof.level / MAX_SKILL_LEVEL))
+        : SPELL_PROFICIENCY_FLOOR
+    const floorSource =
+      prof !== null
+        ? `${prof.skillName} lv ${prof.level} / ${MAX_SKILL_LEVEL}`
+        : `no weapon proficiency · default ${SPELL_PROFICIENCY_FLOOR}`
+    const r = Math.random()
+    const rollMult = floor + (1 - floor) * r
+    const sample = Math.max(1, Math.ceil(value * rollMult))
+    const min = Math.max(1, Math.ceil(value * floor))
+    const max = Math.max(1, Math.ceil(value))
+    const mean = Math.max(1, Math.ceil(value * (floor + 1) / 2))
+    range = { min, mean, max }
+    steps.push({
+      title: '6. Damage roll',
+      inputs: (
+        <>
+          floor = {fmt(floor, 2)} ({floorSource}) · roll ={' '}
+          {fmt(rollMult, 3)}
+        </>
+      ),
+      formula: (
+        <>
+          max(1, ceil({fmt(value)} × ({fmt(floor, 2)} + (1 − {fmt(floor, 2)})
+          × rand))) = {sample}
+        </>
+      ),
+      output: sample,
+      range,
+    })
+    value = sample
+  }
+
+  return appendFinal(steps, value, isHeal, range)
 }
 
-function appendFinal(steps: Step[], value: number, isHeal: boolean): Step[] {
+function appendFinal(
+  steps: Step[],
+  value: number,
+  isHeal: boolean,
+  range: { min: number; mean: number; max: number } | null,
+): Step[] {
   const final = Math.max(0, Math.round(value))
   steps.push({
     title: isHeal ? 'Final heal' : 'Final damage',
@@ -479,6 +579,7 @@ function appendFinal(steps: Step[], value: number, isHeal: boolean): Step[] {
     formula: <>= {final}</>,
     output: final,
     outputLabel: 'FINAL',
+    range: range ?? undefined,
   })
   return steps
 }
@@ -487,32 +588,44 @@ function Pipeline({
   attacker,
   defender,
   spell,
+  skillsCatalog,
   forceCrit,
   forceHit,
   powerCoefficient,
+  rollSeed,
+  onReroll,
 }: {
   attacker: SimpleCharacter
   defender: SimpleCharacter
   spell: Spell
+  skillsCatalog: Skill[] | null
   forceCrit: boolean
   forceHit: boolean
   powerCoefficient: number
+  rollSeed: number
+  onReroll: () => void
 }) {
-  // Recompute when any input changes. The Math.random() rolls cause hit/crit
-  // to vary per re-render, which is what the "Recalculate" button effect of
-  // toggling a checkbox achieves naturally — kept simple on purpose.
+  // Recompute when any input changes — including rollSeed, which the Reroll
+  // button bumps to re-randomize the damage roll sample without touching the
+  // upstream picks.
   const steps = useMemo(
     () =>
-      buildPipeline(attacker, defender, spell, {
+      buildPipeline(attacker, defender, spell, skillsCatalog, {
         forceCrit,
         forceHit,
         powerCoefficient,
       }),
-    [attacker, defender, spell, forceCrit, forceHit, powerCoefficient],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [attacker, defender, spell, skillsCatalog, forceCrit, forceHit, powerCoefficient, rollSeed],
   )
 
   return (
     <div className="dmg-pipeline">
+      <div className="dmg-pipeline-toolbar">
+        <button type="button" className="dmg-reroll" onClick={onReroll}>
+          Reroll
+        </button>
+      </div>
       {steps.map((step, i) => (
         <div
           key={i}
@@ -530,9 +643,19 @@ function Pipeline({
           </div>
           <div className="dmg-step-inputs">{step.inputs}</div>
           <div className="dmg-step-formula">{step.formula}</div>
+          {step.range && (
+            <div className="dmg-step-range">
+              Min <strong>{step.range.min}</strong> · Avg{' '}
+              <strong>{step.range.mean}</strong> · Max{' '}
+              <strong>{step.range.max}</strong>
+            </div>
+          )}
           <div className="dmg-step-output">
             {step.outputLabel === 'FINAL' ? '→ ' : '= '}
             <strong>{fmt(step.output)}</strong>
+            {step.range && step.outputLabel === 'FINAL' && (
+              <span className="dmg-step-note"> · rolled</span>
+            )}
             {step.skipped && (
               <span className="dmg-step-note"> · {step.skipped}</span>
             )}
