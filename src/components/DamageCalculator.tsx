@@ -365,6 +365,17 @@ function SpellSummary({ spell }: { spell: Spell }) {
 
 // ─── Pipeline ────────────────────────────────────────────────────────────────
 
+type MultiRollResult = {
+  count: number
+  min: number
+  max: number
+  mean: number
+  median: number
+  mode: number
+  modeCount: number
+  top10: { value: number; count: number }[]
+}
+
 type Step = {
   title: string
   formula: ReactNode
@@ -619,13 +630,67 @@ function Pipeline({
     [attacker, defender, spell, skillsCatalog, forceCrit, forceHit, powerCoefficient, rollSeed],
   )
 
+  // Multi-roll: simulate the full pipeline N times and aggregate the
+  // final values. Useful for sanity-checking the curve in aggregate.
+  const [nRolls, setNRolls] = useState(1000)
+  const [multi, setMulti] = useState<MultiRollResult | null>(null)
+
+  function runMultiRoll() {
+    const count = Math.max(1, Math.min(100000, Math.floor(nRolls)))
+    let min = Infinity
+    let max = -Infinity
+    let total = 0
+    const samples = new Array<number>(count)
+    const freq = new Map<number, number>()
+    for (let i = 0; i < count; i++) {
+      const s = buildPipeline(attacker, defender, spell, skillsCatalog, {
+        forceCrit,
+        forceHit,
+        powerCoefficient,
+      })
+      const final = s[s.length - 1].output
+      samples[i] = final
+      if (final < min) min = final
+      if (final > max) max = final
+      total += final
+      freq.set(final, (freq.get(final) ?? 0) + 1)
+    }
+
+    // Median — sort a copy so we don't disturb sample order.
+    const sorted = samples.slice().sort((a, b) => a - b)
+    const mid = Math.floor(count / 2)
+    const median =
+      count % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+
+    // Top 10 by frequency. Ties broken by larger value first so the user
+    // sees the more impressive number when counts are equal.
+    const ranked = Array.from(freq.entries())
+      .map(([value, c]) => ({ value, count: c }))
+      .sort((a, b) => b.count - a.count || b.value - a.value)
+    const top10 = ranked.slice(0, 10)
+    const mode = ranked[0]
+
+    setMulti({
+      count,
+      min,
+      max,
+      mean: total / count,
+      median,
+      mode: mode.value,
+      modeCount: mode.count,
+      top10,
+    })
+  }
+
+  // Multi-roll results are stale once any upstream input changes — clear
+  // them so the user isn't comparing apples and oranges.
+  useEffect(() => {
+    setMulti(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attacker, defender, spell, forceCrit, forceHit, powerCoefficient])
+
   return (
     <div className="dmg-pipeline">
-      <div className="dmg-pipeline-toolbar">
-        <button type="button" className="dmg-reroll" onClick={onReroll}>
-          Reroll
-        </button>
-      </div>
       {steps.map((step, i) => (
         <div
           key={i}
@@ -662,6 +727,85 @@ function Pipeline({
           </div>
         </div>
       ))}
+      <div className="dmg-pipeline-toolbar">
+        <button type="button" className="dmg-reroll" onClick={onReroll}>
+          Reroll
+        </button>
+        <div className="dmg-multi-roll">
+          <label className="dmg-multi-label">
+            <span>Roll</span>
+            <input
+              type="number"
+              min={1}
+              max={100000}
+              step={100}
+              value={nRolls}
+              onChange={(e) => setNRolls(Number(e.target.value) || 1)}
+              className="dmg-multi-input"
+            />
+            <span>times</span>
+          </label>
+          <button type="button" className="dmg-reroll" onClick={runMultiRoll}>
+            Run
+          </button>
+        </div>
+      </div>
+      {multi && (
+        <div className="dmg-multi-results">
+          <div className="dmg-multi-title">
+            Across {multi.count.toLocaleString()} rolls
+          </div>
+          <div className="dmg-multi-stats">
+            <div className="dmg-multi-stat">
+              <span className="dmg-multi-stat-label">Lowest</span>
+              <strong>{multi.min}</strong>
+            </div>
+            <div className="dmg-multi-stat">
+              <span className="dmg-multi-stat-label">Mean</span>
+              <strong>{multi.mean.toFixed(1)}</strong>
+            </div>
+            <div className="dmg-multi-stat">
+              <span className="dmg-multi-stat-label">Median</span>
+              <strong>{fmt(multi.median, 1)}</strong>
+            </div>
+            <div className="dmg-multi-stat">
+              <span className="dmg-multi-stat-label">
+                Mode ({multi.modeCount.toLocaleString()}×)
+              </span>
+              <strong>{multi.mode}</strong>
+            </div>
+            <div className="dmg-multi-stat">
+              <span className="dmg-multi-stat-label">Highest</span>
+              <strong>{multi.max}</strong>
+            </div>
+          </div>
+          <div className="dmg-multi-top">
+            <div className="dmg-multi-top-label">
+              Top {multi.top10.length} most-rolled values
+            </div>
+            <ol className="dmg-multi-top-list">
+              {multi.top10.map((row, i) => {
+                const pct = (row.count / multi.count) * 100
+                return (
+                  <li key={i} className="dmg-multi-top-row">
+                    <span className="dmg-multi-top-rank">{i + 1}.</span>
+                    <span className="dmg-multi-top-value">{row.value}</span>
+                    <span className="dmg-multi-top-bar" aria-hidden="true">
+                      <span
+                        className="dmg-multi-top-bar-fill"
+                        style={{ width: `${(row.count / multi.top10[0].count) * 100}%` }}
+                      />
+                    </span>
+                    <span className="dmg-multi-top-count">
+                      {row.count.toLocaleString()} ({pct.toFixed(1)}%)
+                    </span>
+                  </li>
+                )
+              })}
+            </ol>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -2922,8 +2922,11 @@ a.content-card.content-card-link:hover {
 
 .dmg-pipeline-toolbar {
   display: flex;
-  justify-content: flex-end;
-  margin-bottom: -4px;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+  flex-wrap: wrap;
 }
 
 .dmg-reroll {
@@ -2939,5 +2942,130 @@ a.content-card.content-card-link:hover {
 .dmg-reroll:hover {
   background: var(--bg-1);
   border-color: var(--text-dim);
+}
+
+.dmg-multi-roll {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dmg-multi-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.dmg-multi-input {
+  width: 80px;
+  padding: 4px 6px;
+  background: var(--bg-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dmg-multi-results {
+  margin-top: 10px;
+  padding: 12px 16px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid #4a7c8c;
+  border-radius: 6px;
+}
+
+.dmg-multi-title {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.dmg-multi-stats {
+  display: flex;
+  gap: 24px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dmg-multi-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dmg-multi-stat-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.dmg-multi-stat strong {
+  font-size: 18px;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.dmg-multi-top {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+
+.dmg-multi-top-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.dmg-multi-top-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dmg-multi-top-row {
+  display: grid;
+  grid-template-columns: 24px 60px 1fr 140px;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.dmg-multi-top-rank {
+  color: var(--text-dim);
+  text-align: right;
+}
+
+.dmg-multi-top-value {
+  font-weight: 700;
+}
+
+.dmg-multi-top-bar {
+  display: block;
+  height: 8px;
+  background: var(--bg-1);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.dmg-multi-top-bar-fill {
+  display: block;
+  height: 100%;
+  background: #4a7c8c;
+  border-radius: 4px;
+}
+
+.dmg-multi-top-count {
+  color: var(--text-dim);
+  text-align: right;
 }
 
