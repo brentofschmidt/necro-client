@@ -78,6 +78,17 @@ export function Navbar({
                     Publish article
                   </Link>
                 )}
+                {isAdmin(profile) && (
+                  <>
+                    <div className="user-menu-section-label">Dev</div>
+                    <Link
+                      to="/dev/damage-calculator"
+                      className="user-menu-item"
+                    >
+                      Damage calculator
+                    </Link>
+                  </>
+                )}
                 <button className="user-menu-item" onClick={handleSignOut}>
                   Sign out
                 </button>

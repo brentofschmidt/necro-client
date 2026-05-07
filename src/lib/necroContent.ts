@@ -94,7 +94,7 @@ export type PublicCharacterEquipmentSlot = {
   item_id: string
   item_name: string | null
   item_rarity: string | null
-  item_type: string | null
+  item_subclass: string | null
   description: string | null
   weapon_min_damage: number | null
   weapon_max_damage: number | null
@@ -243,12 +243,27 @@ export type Rarity = {
   ground_glow_scale: number
 }
 
-export type ItemType = {
+export type ItemClass = {
+  id: string
+  display_name: string
+  description: string
+  sort_order: number
+}
+
+export type ItemSubclass = {
   name: string
-  group: string
+  item_class: string
   display_name: string
   stackable: boolean
-  equip_slot: string
+  inventory_slot: string
+}
+
+export type InventorySlot = {
+  id: string
+  display_name: string
+  description: string
+  body_region: string
+  sort_order: number
 }
 
 export type RecipeIngredient = {
@@ -274,8 +289,8 @@ export type Item = {
   item_name: string
   description: string
   rarity: string
-  item_type: string
-  slot: string
+  item_subclass: string
+  inventory_slot: string
   required_skill_level: number
   is_stackable: boolean
   max_stack_size: number
@@ -673,7 +688,7 @@ export async function listItems(): Promise<Item[]> {
     .schema('necro_content')
     .from('items')
     .select(
-      'id, item_name, description, rarity, item_type, slot, required_skill_level, is_stackable, max_stack_size, weight, weapon_min_damage, weapon_max_damage, weapon_speed, ability_bonuses, is_craftable',
+      'id, item_name, description, rarity, item_subclass, inventory_slot, required_skill_level, is_stackable, max_stack_size, weight, weapon_min_damage, weapon_max_damage, weapon_speed, ability_bonuses, is_craftable',
     )
     .order('item_name', { ascending: true })
   if (error) {
@@ -701,17 +716,43 @@ export async function listRarities(): Promise<Rarity[]> {
   return (data as Rarity[] | null) ?? []
 }
 
-export async function listItemTypes(): Promise<ItemType[]> {
+export async function listItemSubclasses(): Promise<ItemSubclass[]> {
   const { data, error } = await supabase
     .schema('necro_content')
-    .from('item_types')
-    .select('name, group, display_name, stackable, equip_slot')
+    .from('item_subclasses')
+    .select('name, item_class, display_name, stackable, inventory_slot')
     .order('display_name', { ascending: true })
   if (error) {
-    console.error('Failed to load item types:', error.message)
+    console.error('Failed to load item subclasses:', error.message)
     return []
   }
-  return (data as ItemType[] | null) ?? []
+  return (data as ItemSubclass[] | null) ?? []
+}
+
+export async function listItemClasses(): Promise<ItemClass[]> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .from('item_classes')
+    .select('id, display_name, description, sort_order')
+    .order('sort_order', { ascending: true })
+  if (error) {
+    console.error('Failed to load item classes:', error.message)
+    return []
+  }
+  return (data as ItemClass[] | null) ?? []
+}
+
+export async function listInventorySlots(): Promise<InventorySlot[]> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .from('inventory_slots')
+    .select('id, display_name, description, body_region, sort_order')
+    .order('sort_order', { ascending: true })
+  if (error) {
+    console.error('Failed to load inventory slots:', error.message)
+    return []
+  }
+  return (data as InventorySlot[] | null) ?? []
 }
 
 const ACTION_COLUMNS =

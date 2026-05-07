@@ -15,6 +15,7 @@ import { PublicProfile } from './components/PublicProfile'
 import { GamePage } from './components/GamePage'
 import { CharacterPage } from './components/CharacterPage'
 import { GuildPage } from './components/GuildPage'
+import { DamageCalculator } from './components/DamageCalculator'
 import {
   About,
   BugReports,
@@ -60,6 +61,7 @@ const router = createBrowserRouter([
             element: <GuildPage />,
           },
           { path: '/g/:gameId/:section?/:tab?', element: <GamePage /> },
+          { path: '/dev/damage-calculator', element: <DamageCalculator /> },
           { path: '/about', element: <About /> },
           { path: '/contact', element: <Contact /> },
           { path: '/careers', element: <Careers /> },

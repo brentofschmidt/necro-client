@@ -1,23 +1,29 @@
 import { ReactNode, useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { fetchGameById, Game, GameStatus } from '../lib/games'
 import { formatRelativeShort } from '../lib/time'
+import { DataTable, DataTableColumn } from './DataTable'
 import {
   Ability,
   Action,
+  ActionEffect,
   Alignment,
   DamageType,
   Faction,
   getRealmStats,
   Item,
-  ItemType,
+  InventorySlot,
+  ItemClass,
+  ItemSubclass,
   listAbilities,
   listActions,
   listAlignments,
   listDamageTypes,
   listFactions,
   listItems,
-  listItemTypes,
+  listInventorySlots,
+  listItemClasses,
+  listItemSubclasses,
   listPublicCharacters,
   listPublicGuilds,
   listRaces,
@@ -45,29 +51,46 @@ import {
   Zone,
 } from '../lib/necroContent'
 
-type SectionId = 'game' | 'characters' | 'guilds' | 'leaderboards' | 'patch-notes'
+type SectionId =
+  | 'game'
+  | 'database'
+  | 'characters'
+  | 'guilds'
+  | 'leaderboards'
+  | 'patch-notes'
 
-type GameInfoTabId =
-  | 'overview'
+// "Information" tabs: catalogs / descriptors / world-rules — the
+// reference material a player consults to understand the game's shape.
+type GameInfoTabId = 'overview'
+
+// "Database" tabs: every catalog and content collection the game
+// defines. This view is built for technical browsing and data-driven
+// insight — anything player-facing gets a richer purpose-built page
+// elsewhere.
+type DatabaseTabId =
   | 'items'
-  | 'item_types'
+  | 'item_classes'
+  | 'item_subclasses'
+  | 'inventory_slots'
   | 'rarities'
-  | 'recipes'
+  | 'damage_types'
+  | 'stats'
   | 'abilities'
   | 'resources'
-  | 'stats'
-  | 'actions'
-  | 'spells'
-  | 'damage_types'
   | 'skills'
+  | 'proficiencies'
   | 'races'
   | 'alignments'
   | 'factions'
   | 'zones'
   | 'realms'
+  | 'spells'
+  | 'recipes'
+  | 'actions'
 
 const SECTIONS: { id: SectionId; label: string }[] = [
   { id: 'game', label: 'Game Information' },
+  { id: 'database', label: 'Database' },
   { id: 'characters', label: 'Characters' },
   { id: 'guilds', label: 'Guilds' },
   { id: 'leaderboards', label: 'Leaderboards' },
@@ -76,26 +99,33 @@ const SECTIONS: { id: SectionId; label: string }[] = [
 
 const GAME_INFO_TABS: { id: GameInfoTabId; label: string }[] = [
   { id: 'overview', label: 'Overview' },
+]
+
+const DATABASE_TABS: { id: DatabaseTabId; label: string }[] = [
   { id: 'items', label: 'Items' },
-  { id: 'item_types', label: 'Item Types' },
+  { id: 'item_classes', label: 'Item Classes' },
+  { id: 'item_subclasses', label: 'Item Subclasses' },
+  { id: 'inventory_slots', label: 'Inventory Slots' },
   { id: 'rarities', label: 'Rarities' },
-  { id: 'recipes', label: 'Recipes' },
+  { id: 'damage_types', label: 'Damage Types' },
+  { id: 'stats', label: 'Stats' },
   { id: 'abilities', label: 'Abilities' },
   { id: 'resources', label: 'Resources' },
-  { id: 'stats', label: 'Stats' },
-  { id: 'actions', label: 'Actions' },
-  { id: 'spells', label: 'Spells' },
-  { id: 'damage_types', label: 'Damage Types' },
   { id: 'skills', label: 'Skills' },
+  { id: 'proficiencies', label: 'Proficiencies' },
   { id: 'races', label: 'Races' },
   { id: 'alignments', label: 'Alignments' },
   { id: 'factions', label: 'Factions' },
   { id: 'zones', label: 'Zones' },
   { id: 'realms', label: 'Realms' },
+  { id: 'spells', label: 'Spells' },
+  { id: 'recipes', label: 'Recipes' },
+  { id: 'actions', label: 'Actions' },
 ]
 
 const DEFAULT_SECTION: SectionId = 'game'
 const DEFAULT_GAME_INFO_TAB: GameInfoTabId = 'overview'
+const DEFAULT_DATABASE_TAB: DatabaseTabId = 'items'
 
 function isSectionId(value: string | null | undefined): value is SectionId {
   return SECTIONS.some((s) => s.id === value)
@@ -103,6 +133,10 @@ function isSectionId(value: string | null | undefined): value is SectionId {
 
 function isGameInfoTabId(value: string | null | undefined): value is GameInfoTabId {
   return GAME_INFO_TABS.some((t) => t.id === value)
+}
+
+function isDatabaseTabId(value: string | null | undefined): value is DatabaseTabId {
+  return DATABASE_TABS.some((t) => t.id === value)
 }
 
 function TabIcon({ children }: { children: ReactNode }) {
@@ -124,7 +158,7 @@ function TabIcon({ children }: { children: ReactNode }) {
   )
 }
 
-const TAB_ICONS: Record<GameInfoTabId, ReactNode> = {
+const TAB_ICONS: Record<GameInfoTabId | DatabaseTabId, ReactNode> = {
   overview: (
     <TabIcon>
       <circle cx="12" cy="12" r="9" />
@@ -139,12 +173,26 @@ const TAB_ICONS: Record<GameInfoTabId, ReactNode> = {
       <path d="M3 17l9 4 9-4" />
     </TabIcon>
   ),
-  item_types: (
+  item_classes: (
+    <TabIcon>
+      <rect x="4" y="4" width="16" height="6" rx="1" />
+      <rect x="4" y="14" width="16" height="6" rx="1" />
+    </TabIcon>
+  ),
+  item_subclasses: (
     <TabIcon>
       <rect x="4" y="4" width="7" height="7" />
       <rect x="13" y="4" width="7" height="7" />
       <rect x="4" y="13" width="7" height="7" />
       <rect x="13" y="13" width="7" height="7" />
+    </TabIcon>
+  ),
+  inventory_slots: (
+    <TabIcon>
+      <circle cx="12" cy="5" r="2" />
+      <path d="M8 11h8l-1 5-2 1v4h-2v-4l-2-1z" />
+      <path d="M8 11l-3 1v4" />
+      <path d="M16 11l3 1v4" />
     </TabIcon>
   ),
   rarities: (
@@ -202,6 +250,14 @@ const TAB_ICONS: Record<GameInfoTabId, ReactNode> = {
       <path d="M4 4v12a4 4 0 0 0 4 4" />
       <path d="M9 9h7" />
       <path d="M9 13h7" />
+    </TabIcon>
+  ),
+  proficiencies: (
+    <TabIcon>
+      <path d="M14 4h6v6" />
+      <path d="M20 4L9 15" />
+      <path d="M9 15l-2 2 3 3 2-2" />
+      <path d="M5 19l2 2" />
     </TabIcon>
   ),
   races: (
@@ -271,15 +327,25 @@ export function GamePage() {
     ? paramTab
     : DEFAULT_GAME_INFO_TAB
 
-  // Remember the last game-info sub-tab the user looked at so switching
-  // away to e.g. Characters and back to Game Information lands them on the
-  // same sub-tab they had open, not the default Overview.
+  const activeDatabaseTab: DatabaseTabId = isDatabaseTabId(paramTab)
+    ? paramTab
+    : DEFAULT_DATABASE_TAB
+
+  // Remember the last sub-tab the user looked at within each section so
+  // switching away to e.g. Characters and back to Game Information /
+  // Database lands them on the same sub-tab they had open instead of the
+  // section default.
   const [lastGameInfoTab, setLastGameInfoTab] =
     useState<GameInfoTabId>(DEFAULT_GAME_INFO_TAB)
+  const [lastDatabaseTab, setLastDatabaseTab] =
+    useState<DatabaseTabId>(DEFAULT_DATABASE_TAB)
 
   useEffect(() => {
-    if (paramSection === 'game' && paramTab && isGameInfoTabId(paramTab)) {
+    if (paramSection === 'game' && isGameInfoTabId(paramTab)) {
       setLastGameInfoTab(paramTab)
+    }
+    if (paramSection === 'database' && isDatabaseTabId(paramTab)) {
+      setLastDatabaseTab(paramTab)
     }
   }, [paramSection, paramTab])
 
@@ -290,7 +356,7 @@ export function GamePage() {
     // user back to the top of the new section / sub-tab instead of leaving
     // them wherever they last scrolled.
     window.scrollTo({ top: 0, behavior: 'auto' })
-  }, [activeSection, activeGameInfoTab])
+  }, [activeSection, activeGameInfoTab, activeDatabaseTab])
 
   useEffect(() => {
     if (!gameId) {
@@ -315,7 +381,7 @@ export function GamePage() {
   }, [gameId])
 
   // Canonicalize the URL so any partial / invalid path lands on a real one
-  // (e.g. /g/necro → /g/necro/game/overview, /g/necro/game → same,
+  // (e.g. /g/necro → /g/necro/game/overview, /g/necro/database → .../items,
   // /g/necro/characters/foo → /g/necro/characters).
   useEffect(() => {
     if (!gameId) return
@@ -327,7 +393,17 @@ export function GamePage() {
       navigate(`/g/${gameId}/game/${DEFAULT_GAME_INFO_TAB}`, { replace: true })
       return
     }
-    if (paramSection !== 'game' && paramTab) {
+    if (paramSection === 'database' && !isDatabaseTabId(paramTab)) {
+      navigate(`/g/${gameId}/database/${DEFAULT_DATABASE_TAB}`, {
+        replace: true,
+      })
+      return
+    }
+    if (
+      paramSection !== 'game' &&
+      paramSection !== 'database' &&
+      paramTab
+    ) {
       navigate(`/g/${gameId}/${paramSection}`, { replace: true })
     }
   }, [gameId, paramSection, paramTab, navigate])
@@ -336,6 +412,8 @@ export function GamePage() {
     if (!gameId) return
     if (id === 'game') {
       navigate(`/g/${gameId}/game/${lastGameInfoTab}`, { replace: true })
+    } else if (id === 'database') {
+      navigate(`/g/${gameId}/database/${lastDatabaseTab}`, { replace: true })
     } else {
       navigate(`/g/${gameId}/${id}`, { replace: true })
     }
@@ -344,6 +422,11 @@ export function GamePage() {
   function setGameInfoTab(id: GameInfoTabId) {
     if (!gameId) return
     navigate(`/g/${gameId}/game/${id}`, { replace: true })
+  }
+
+  function setDatabaseTab(id: DatabaseTabId) {
+    if (!gameId) return
+    navigate(`/g/${gameId}/database/${id}`, { replace: true })
   }
 
   if (loadState === 'loading') {
@@ -368,53 +451,66 @@ export function GamePage() {
     case 'overview':
       gameInfoContent = <InformationSection game={game} />
       break
+  }
+
+  let databaseContent: ReactNode = null
+  switch (activeDatabaseTab) {
     case 'items':
-      gameInfoContent = <ItemsSection />
+      databaseContent = <ItemsSection />
       break
-    case 'item_types':
-      gameInfoContent = <ItemTypesSection />
+    case 'item_classes':
+      databaseContent = <ItemClassesSection />
+      break
+    case 'item_subclasses':
+      databaseContent = <ItemSubclassesSection />
+      break
+    case 'inventory_slots':
+      databaseContent = <InventorySlotsSection />
       break
     case 'rarities':
-      gameInfoContent = <RaritiesSection />
-      break
-    case 'recipes':
-      gameInfoContent = <RecipesSection />
-      break
-    case 'abilities':
-      gameInfoContent = <AbilitiesSection />
-      break
-    case 'resources':
-      gameInfoContent = <ResourcesSection />
-      break
-    case 'stats':
-      gameInfoContent = <StatsSection />
-      break
-    case 'actions':
-      gameInfoContent = <ActionsSection />
-      break
-    case 'spells':
-      gameInfoContent = <SpellsSection />
+      databaseContent = <RaritiesSection />
       break
     case 'damage_types':
-      gameInfoContent = <DamageTypesSection />
+      databaseContent = <DamageTypesSection />
+      break
+    case 'stats':
+      databaseContent = <StatsSection />
+      break
+    case 'abilities':
+      databaseContent = <AbilitiesSection />
+      break
+    case 'resources':
+      databaseContent = <ResourcesSection />
       break
     case 'skills':
-      gameInfoContent = <SkillsSection />
+      databaseContent = <SkillsSection />
+      break
+    case 'proficiencies':
+      databaseContent = <ProficienciesSection />
       break
     case 'races':
-      gameInfoContent = <RacesSection />
+      databaseContent = <RacesSection />
       break
     case 'alignments':
-      gameInfoContent = <AlignmentsSection />
+      databaseContent = <AlignmentsSection />
       break
     case 'factions':
-      gameInfoContent = <FactionsSection />
+      databaseContent = <FactionsSection />
       break
     case 'zones':
-      gameInfoContent = <ZonesSection />
+      databaseContent = <ZonesSection />
       break
     case 'realms':
-      gameInfoContent = <RealmsSection />
+      databaseContent = <RealmsSection />
+      break
+    case 'spells':
+      databaseContent = <SpellsSection />
+      break
+    case 'recipes':
+      databaseContent = <RecipesSection />
+      break
+    case 'actions':
+      databaseContent = <ActionsSection />
       break
   }
 
@@ -443,6 +539,29 @@ export function GamePage() {
         </div>
       )
       break
+    case 'database':
+      sectionContent = (
+        <div className="settings-layout">
+          <nav className="settings-tabs" aria-label={`${game.name} database`}>
+            {DATABASE_TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className={`settings-tab ${activeDatabaseTab === t.id ? 'active' : ''}`}
+                onClick={() => setDatabaseTab(t.id)}
+                aria-current={activeDatabaseTab === t.id ? 'page' : undefined}
+              >
+                {TAB_ICONS[t.id]}
+                <span>{t.label}</span>
+              </button>
+            ))}
+          </nav>
+          <div className="settings-content" ref={contentRef}>
+            {databaseContent}
+          </div>
+        </div>
+      )
+      break
     case 'characters':
       sectionContent = <CharactersSection />
       break
@@ -450,12 +569,7 @@ export function GamePage() {
       sectionContent = <GuildsSection />
       break
     case 'leaderboards':
-      sectionContent = (
-        <ComingSoonSection
-          title="Leaderboards"
-          description="Top players by level, achievements, PvP rating, and more."
-        />
-      )
+      sectionContent = <LeaderboardSection />
       break
     case 'patch-notes':
       sectionContent = (
@@ -560,39 +674,6 @@ function useAsyncList<T>(load: () => Promise<T[]>, deps: unknown[] = []) {
   }, deps)
 
   return items
-}
-
-function ContentSection({
-  title,
-  description,
-  items,
-  emptyText,
-  headerExtra,
-  children,
-}: {
-  title: string
-  description: string
-  items: unknown[] | null
-  emptyText: string
-  headerExtra?: ReactNode
-  children: ReactNode
-}) {
-  return (
-    <section className="settings-section">
-      <header className="settings-section-header">
-        <h2>{title}</h2>
-        <p>{description}</p>
-      </header>
-      {headerExtra}
-      {items === null ? (
-        <p className="text-dim">Loading…</p>
-      ) : items.length === 0 ? (
-        <p className="text-dim">{emptyText}</p>
-      ) : (
-        <div className="content-card-grid">{children}</div>
-      )}
-    </section>
-  )
 }
 
 const DAMAGE_TYPE_ICONS: Record<string, ReactNode> = {
@@ -721,8 +802,25 @@ function DamageTypeIcon({ id, color }: { id: string; color: string }) {
 
 function DamageTypesSection() {
   const types = useAsyncList<DamageType>(() => listDamageTypes())
-  const physical = types?.filter((t) => t.is_physical) ?? []
-  const magical = types?.filter((t) => !t.is_physical) ?? []
+
+  const columns: DataTableColumn<DamageType>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (dt) => (
+        <>
+          <DamageTypeIcon id={dt.id} color={dt.display_color} />
+          <span
+            className="data-cell-name"
+            style={{ color: dt.display_color || 'inherit' }}
+          >
+            {dt.display_name}
+          </span>
+        </>
+      ),
+      sortKey: (dt) => dt.display_name.toLowerCase(),
+    },
+  ]
 
   return (
     <section className="settings-section">
@@ -730,47 +828,46 @@ function DamageTypesSection() {
         <h2>Damage Types</h2>
         <p>
           Damage classifications used by abilities, weapons, and resistances.
-          Physical types map to weapon damage; magical covers elemental and arcane.
+          Physical types map to weapon damage; magical covers elemental and
+          arcane. Click a row for details.
         </p>
       </header>
-
-      {types === null ? (
-        <p className="text-dim">Loading…</p>
-      ) : types.length === 0 ? (
-        <p className="text-dim">No damage types defined yet.</p>
-      ) : (
-        <>
-          {physical.length > 0 && (
-            <DamageTypeGroup title="Physical" types={physical} />
-          )}
-          {magical.length > 0 && (
-            <DamageTypeGroup title="Magical" types={magical} />
-          )}
-        </>
-      )}
+      <DataTable<DamageType>
+        rows={types}
+        columns={columns}
+        rowKey={(dt) => dt.id}
+        searchPlaceholder="Search damage types…"
+        searchKeys={(dt) => [dt.display_name, dt.id, dt.description]}
+        emptyText="No damage types defined yet."
+        defaultSort={{ columnId: 'name', direction: 'asc' }}
+        expandedContent={(dt) => (
+          <dl className="data-expansion">
+            <dt>ID</dt>
+            <dd><code className="data-table-mono">{dt.id}</code></dd>
+            <dt>Kind</dt>
+            <dd>{dt.is_physical ? 'Physical' : 'Magical'}</dd>
+            {dt.resistance_stat && (
+              <>
+                <dt>Resistance Stat</dt>
+                <dd>{dt.resistance_stat}</dd>
+              </>
+            )}
+            <dt>Color</dt>
+            <dd>
+              <code className="data-table-mono">
+                {dt.display_color.toUpperCase()}
+              </code>
+            </dd>
+            {dt.description && (
+              <>
+                <dt>Description</dt>
+                <dd>{dt.description}</dd>
+              </>
+            )}
+          </dl>
+        )}
+      />
     </section>
-  )
-}
-
-function DamageTypeGroup({ title, types }: { title: string; types: DamageType[] }) {
-  return (
-    <div className="content-subgroup">
-      <h3 className="content-subgroup-heading">{title}</h3>
-      <div className="content-card-grid">
-        {types.map((dt) => (
-          <article key={dt.id} className="content-card">
-            <header className="content-card-header">
-              <h3 className="content-card-title">
-                <DamageTypeIcon id={dt.id} color={dt.display_color} />
-                {dt.display_name}
-              </h3>
-              <span className="content-card-id">{dt.id}</span>
-            </header>
-            {dt.description && <p className="content-card-body">{dt.description}</p>}
-          </article>
-        ))}
-      </div>
-    </div>
   )
 }
 
@@ -940,72 +1037,121 @@ function SkillIcon({ name, category }: { name: string; category: SkillCategory }
 }
 
 function SkillsSection() {
-  const skills = useAsyncList<Skill>(() => listSkills())
-  const proficiencies = skills?.filter((s) => s.category === 'Proficiency') ?? []
-  const activities = skills?.filter((s) => s.category === 'Activity') ?? []
+  const all = useAsyncList<Skill>(() => listSkills())
+  const skills = all == null ? null : all.filter((s) => s.category === 'Activity')
+
+  const columns: DataTableColumn<Skill>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (s) => (
+        <>
+          <SkillIcon name={s.name} category={s.category} />
+          <span className="data-cell-name">{s.display_name}</span>
+        </>
+      ),
+      sortKey: (s) => s.display_name.toLowerCase(),
+    },
+  ]
 
   return (
     <section className="settings-section">
       <header className="settings-section-header">
         <h2>Skills</h2>
         <p>
-          Player skills and proficiencies — combat profs gate weapon use; activities
-          cover gathering, crafting, and trade.
+          Activity skills — gathering, crafting, and trade. Trained by doing.
+          Click a row for details.
         </p>
       </header>
-
-      {skills === null ? (
-        <p className="text-dim">Loading…</p>
-      ) : skills.length === 0 ? (
-        <p className="text-dim">No skills defined yet.</p>
-      ) : (
-        <>
-          {proficiencies.length > 0 && (
-            <SkillGroup title="Proficiencies" skills={proficiencies} />
-          )}
-          {activities.length > 0 && (
-            <SkillGroup title="Activities" skills={activities} />
-          )}
-        </>
-      )}
+      <DataTable<Skill>
+        rows={skills}
+        columns={columns}
+        rowKey={(s) => s.name}
+        searchPlaceholder="Search skills…"
+        searchKeys={(s) => [s.display_name, s.name, s.description, ...s.item_types]}
+        emptyText="No activity skills defined yet."
+        defaultSort={{ columnId: 'name', direction: 'asc' }}
+        expandedContent={(s) => <SkillExpansion skill={s} />}
+      />
     </section>
   )
 }
 
-function SkillGroup({ title, skills }: { title: string; skills: Skill[] }) {
+function ProficienciesSection() {
+  const all = useAsyncList<Skill>(() => listSkills())
+  const profs =
+    all == null ? null : all.filter((s) => s.category === 'Proficiency')
+
+  const columns: DataTableColumn<Skill>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (s) => (
+        <>
+          <SkillIcon name={s.name} category={s.category} />
+          <span className="data-cell-name">{s.display_name}</span>
+        </>
+      ),
+      sortKey: (s) => s.display_name.toLowerCase(),
+    },
+  ]
+
   return (
-    <div className="content-subgroup">
-      <h3 className="content-subgroup-heading">{title}</h3>
-      <div className="content-card-grid">
-        {skills.map((s) => (
-          <article key={s.name} className="content-card">
-            <header className="content-card-header">
-              <h3 className="content-card-title">
-                <SkillIcon name={s.name} category={s.category} />
-                {s.display_name}
-              </h3>
-              <span className="content-card-id">{s.name}</span>
-            </header>
-            {s.description && <p className="content-card-body">{s.description}</p>}
-            {s.per_level_effects.length > 0 && (
-              <ul className="content-card-rules">
-                {s.per_level_effects.map((eff, i) => (
-                  <li key={i}>{eff.description}</li>
-                ))}
-              </ul>
-            )}
-            <div className="content-card-meta">
-              <span className="tag-muted">Max lv {s.max_level}</span>
-              {s.item_types.map((t) => (
-                <span key={t} className="tag-muted">
-                  {t}
-                </span>
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Proficiencies</h2>
+        <p>
+          Weapon proficiencies — swords, axes, maces, daggers, bows, staves.
+          Gate weapon use and improve accuracy / damage with that family.
+          Click a row for details.
+        </p>
+      </header>
+      <DataTable<Skill>
+        rows={profs}
+        columns={columns}
+        rowKey={(s) => s.name}
+        searchPlaceholder="Search proficiencies…"
+        searchKeys={(s) => [s.display_name, s.name, s.description, ...s.item_types]}
+        emptyText="No proficiencies defined yet."
+        defaultSort={{ columnId: 'name', direction: 'asc' }}
+        expandedContent={(s) => <SkillExpansion skill={s} />}
+      />
+    </section>
+  )
+}
+
+function SkillExpansion({ skill: s }: { skill: Skill }) {
+  return (
+    <dl className="data-expansion">
+      <dt>ID</dt>
+      <dd><code className="data-table-mono">{s.name}</code></dd>
+      <dt>Max Level</dt>
+      <dd>{s.max_level}</dd>
+      {s.item_types.length > 0 && (
+        <>
+          <dt>Item Types</dt>
+          <dd>{s.item_types.join(', ')}</dd>
+        </>
+      )}
+      {s.description && (
+        <>
+          <dt>Description</dt>
+          <dd>{s.description}</dd>
+        </>
+      )}
+      {s.per_level_effects.length > 0 && (
+        <>
+          <dt>Per-Level Effects</dt>
+          <dd>
+            <ul className="data-expansion-list">
+              {s.per_level_effects.map((eff, i) => (
+                <li key={i}>{eff.description}</li>
               ))}
-            </div>
-          </article>
-        ))}
-      </div>
-    </div>
+            </ul>
+          </dd>
+        </>
+      )}
+    </dl>
   )
 }
 
@@ -1071,61 +1217,77 @@ function RaceIcon({ id }: { id: string }) {
   )
 }
 
-function BonusList({
-  title,
-  entries,
-}: {
-  title: string
-  entries: { value: number; description: string }[]
-}) {
-  return (
-    <div className="content-card-bonus-group">
-      <div className="content-card-bonus-heading">{title}</div>
-      <ul className="content-card-bonuses">
-        {entries.map((b, i) => (
-          <li
-            key={i}
-            className={
-              b.value > 0
-                ? 'content-card-bonus-positive'
-                : b.value < 0
-                  ? 'content-card-bonus-negative'
-                  : ''
-            }
-          >
-            {b.description}
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
 function RacesSection() {
   const races = useAsyncList<Race>(() => listRaces())
+
+  const columns: DataTableColumn<Race>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (r) => (
+        <>
+          <RaceIcon id={r.id} />
+          <span className="data-cell-name">{r.display_name}</span>
+        </>
+      ),
+      sortKey: (r) => r.display_name.toLowerCase(),
+    },
+  ]
+
   return (
-    <ContentSection
-      title="Races"
-      description="Playable races and their lore. Stats and starting abilities live in necro_content.races."
-      items={races}
-      emptyText="No races defined yet."
-    >
-      {races?.map((r) => (
-        <article key={r.id} className="content-card">
-          <header className="content-card-header">
-            <h3 className="content-card-title">
-              <RaceIcon id={r.id} />
-              {r.display_name}
-            </h3>
-            <span className="content-card-id">{r.id}</span>
-          </header>
-          {r.description && <p className="content-card-body">{r.description}</p>}
-          {r.ability_bonuses.length > 0 && (
-            <BonusList title="Abilities" entries={r.ability_bonuses} />
-          )}
-        </article>
-      ))}
-    </ContentSection>
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Races</h2>
+        <p>
+          Playable races and their lore. Stats and starting abilities live in
+          necro_content.races. Click a row for details.
+        </p>
+      </header>
+      <DataTable<Race>
+        rows={races}
+        columns={columns}
+        rowKey={(r) => r.id}
+        searchPlaceholder="Search races…"
+        searchKeys={(r) => [r.display_name, r.id, r.description]}
+        emptyText="No races defined yet."
+        defaultSort={{ columnId: 'name', direction: 'asc' }}
+        expandedContent={(r) => (
+          <dl className="data-expansion">
+            <dt>ID</dt>
+            <dd><code className="data-table-mono">{r.id}</code></dd>
+            {r.description && (
+              <>
+                <dt>Description</dt>
+                <dd>{r.description}</dd>
+              </>
+            )}
+            {r.ability_bonuses.length > 0 && (
+              <>
+                <dt>Ability Bonuses</dt>
+                <dd>
+                  <ul className="data-expansion-list">
+                    {r.ability_bonuses.map((b, i) => (
+                      <li
+                        key={i}
+                        className={
+                          b.value > 0
+                            ? 'data-expansion-positive'
+                            : b.value < 0
+                              ? 'data-expansion-negative'
+                              : ''
+                        }
+                      >
+                        {b.description}
+                      </li>
+                    ))}
+                  </ul>
+                </dd>
+              </>
+            )}
+          </dl>
+        )}
+      />
+    </section>
   )
 }
 
@@ -1381,74 +1543,78 @@ function StatIcon({ category }: { category: StatCategory }) {
   )
 }
 
-const STAT_CATEGORY_ORDER: StatCategory[] = [
-  'Power',
-  'Crit',
-  'Speed',
-  'Defense',
-  'Precision',
-  'Sustain',
-  'Mastery',
-  'Gathering',
-]
-
 function StatsSection() {
   const stats = useAsyncList<Stat>(() => listStats())
+
+  const columns: DataTableColumn<Stat>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (s) => (
+        <>
+          <StatIcon category={s.category} />
+          <span className="data-cell-name">{s.display_name}</span>
+        </>
+      ),
+      sortKey: (s) => s.display_name.toLowerCase(),
+    },
+  ]
 
   return (
     <section className="settings-section">
       <header className="settings-section-header">
         <h2>Stats</h2>
         <p>
-          Derived combat stats — attack power, crit, haste, armor, and the rest. Most
-          values come from gear and buffs rather than character creation.
+          Derived combat stats — attack power, crit, haste, armor, and the rest.
+          Most values come from gear and buffs rather than character creation.
+          Click a row for details.
         </p>
       </header>
-
-      {stats === null ? (
-        <p className="text-dim">Loading…</p>
-      ) : stats.length === 0 ? (
-        <p className="text-dim">No stats defined yet.</p>
-      ) : (
-        <>
-          {STAT_CATEGORY_ORDER.map((cat) => {
-            const group = stats.filter((s) => s.category === cat)
-            if (group.length === 0) return null
-            return <StatGroup key={cat} title={cat} stats={group} />
-          })}
-        </>
-      )}
-    </section>
-  )
-}
-
-function StatGroup({ title, stats }: { title: StatCategory; stats: Stat[] }) {
-  return (
-    <div className="content-subgroup">
-      <h3 className="content-subgroup-heading">{title}</h3>
-      <div className="content-card-grid">
-        {stats.map((s) => (
-          <article key={s.id} className="content-card">
-            <header className="content-card-header">
-              <h3 className="content-card-title">
-                <StatIcon category={s.category} />
-                {s.display_name}
-              </h3>
-              <span className="content-card-id">{s.is_percent ? '%' : '#'}</span>
-            </header>
-            {s.description && <p className="content-card-body">{s.description}</p>}
-            {s.conversion_per_point && (
-              <p className="content-card-metric">{s.conversion_per_point}</p>
-            )}
+      <DataTable<Stat>
+        rows={stats}
+        columns={columns}
+        rowKey={(s) => s.id}
+        searchPlaceholder="Search stats…"
+        searchKeys={(s) => [
+          s.display_name,
+          s.id,
+          s.affects,
+          s.category,
+          s.conversion_per_point,
+          s.description,
+        ]}
+        emptyText="No stats defined yet."
+        defaultSort={{ columnId: 'name', direction: 'asc' }}
+        expandedContent={(s) => (
+          <dl className="data-expansion">
+            <dt>ID</dt>
+            <dd><code className="data-table-mono">{s.id}</code></dd>
+            <dt>Category</dt>
+            <dd>{s.category}</dd>
+            <dt>Type</dt>
+            <dd>{s.is_percent ? 'Percentage' : 'Flat'}</dd>
             {s.affects && (
-              <div className="content-card-meta">
-                <span className="tag-muted">{s.affects}</span>
-              </div>
+              <>
+                <dt>Affects</dt>
+                <dd>{s.affects}</dd>
+              </>
             )}
-          </article>
-        ))}
-      </div>
-    </div>
+            {s.conversion_per_point && (
+              <>
+                <dt>Per Point</dt>
+                <dd>{s.conversion_per_point}</dd>
+              </>
+            )}
+            {s.description && (
+              <>
+                <dt>Description</dt>
+                <dd>{s.description}</dd>
+              </>
+            )}
+          </dl>
+        )}
+      />
+    </section>
   )
 }
 
@@ -1492,172 +1658,116 @@ function ResourceIcon({ id, color }: { id: string; color: string }) {
 
 function ResourcesSection() {
   const resources = useAsyncList<Resource>(() => listResources())
-  return (
-    <ContentSection
-      title="Resources"
-      description="Pools every character carries — health, mana, and stamina. Catalog values define defaults; each character's current and max values live on necro_player.character_resources."
-      items={resources}
-      emptyText="No resources defined yet."
-    >
-      {resources?.map((r) => (
-        <article key={r.id} className="content-card">
-          <header className="content-card-header">
-            <h3 className="content-card-title">
-              <ResourceIcon id={r.id} color={r.display_color} />
-              {r.display_name}
-            </h3>
-            <span className="content-card-id">{r.id}</span>
-          </header>
-          {r.description && <p className="content-card-body">{r.description}</p>}
-        </article>
-      ))}
-    </ContentSection>
-  )
-}
 
-function formatSeconds(value: number): string {
-  if (value === 0) return 'Instant'
-  if (value < 1) return `${(value * 1000).toFixed(0)}ms`
-  return `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)}s`
-}
-
-function ActiveEffectCard({
-  effect,
-  variant,
-}: {
-  effect: Action | Spell
-  variant: 'action' | 'spell'
-}) {
-  const damage = 'damage' in effect ? effect.damage : 0
-  const damageSchool = 'damage_school' in effect ? effect.damage_school : null
-  const splashRadius = 'splash_radius' in effect ? effect.splash_radius : null
-
-  const isHeal = effect.is_heal
-  const damageLabel = isHeal
-    ? `Heals ${damage}`
-    : damage > 0
-      ? `${damage} damage`
-      : null
-
-  return (
-    <article className="content-card">
-      <header className="content-card-header">
-        <h3 className="content-card-title">
+  const columns: DataTableColumn<Resource>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (r) => (
+        <>
+          <ResourceIcon id={r.id} color={r.display_color} />
           <span
-            className={`active-effect-mark active-effect-mark-${variant}`}
-            aria-hidden="true"
-          />
-          {effect.ability_name}
-        </h3>
-        <span className="content-card-id">{effect.asset_name}</span>
+            className="data-cell-name"
+            style={{ color: r.display_color || 'inherit' }}
+          >
+            {r.display_name}
+          </span>
+        </>
+      ),
+      sortKey: (r) => r.sort_order,
+    },
+  ]
+
+  return (
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Resources</h2>
+        <p>
+          Pools every character carries — health, mana, and stamina. Catalog
+          values define defaults; each character's current and max values live
+          on necro_player.character_resources. Click a row for details.
+        </p>
       </header>
-      {effect.description && <p className="content-card-body">{effect.description}</p>}
-      {effect.effects.length > 0 && (
-        <ul className="content-card-rules">
-          {effect.effects
-            .filter((eff) => typeof eff.description === 'string' && eff.description)
-            .map((eff, i) => (
-              <li key={i}>{eff.description}</li>
-            ))}
-        </ul>
-      )}
-
-      <div className="content-card-stats">
-        {damageLabel && (
-          <span className={isHeal ? 'stat-pill stat-pill-heal' : 'stat-pill'}>
-            {damageLabel}
-          </span>
+      <DataTable<Resource>
+        rows={resources}
+        columns={columns}
+        rowKey={(r) => r.id}
+        searchPlaceholder="Search resources…"
+        searchKeys={(r) => [r.display_name, r.id, r.description]}
+        emptyText="No resources defined yet."
+        defaultSort={{ columnId: 'name', direction: 'asc' }}
+        expandedContent={(r) => (
+          <dl className="data-expansion">
+            <dt>ID</dt>
+            <dd><code className="data-table-mono">{r.id}</code></dd>
+            <dt>Color</dt>
+            <dd>
+              <code className="data-table-mono">
+                {r.display_color.toUpperCase()}
+              </code>
+            </dd>
+            <dt>Order</dt>
+            <dd>{r.sort_order}</dd>
+            {r.description && (
+              <>
+                <dt>Description</dt>
+                <dd>{r.description}</dd>
+              </>
+            )}
+          </dl>
         )}
-        {damageSchool && (
-          <span className="stat-pill stat-pill-muted">{damageSchool}</span>
-        )}
-        {effect.cast_time > 0 && (
-          <span className="stat-pill stat-pill-muted">
-            Cast {formatSeconds(effect.cast_time)}
-          </span>
-        )}
-        {effect.global_cooldown > 0 && effect.cast_time === 0 && (
-          <span className="stat-pill stat-pill-muted">
-            GCD {formatSeconds(effect.global_cooldown)}
-          </span>
-        )}
-        {effect.cooldown > 0 && (
-          <span className="stat-pill stat-pill-muted">
-            CD {formatSeconds(effect.cooldown)}
-          </span>
-        )}
-        {effect.resource_cost > 0 && (
-          <span className="stat-pill stat-pill-muted">
-            {effect.resource_cost} {effect.resource_type.toLowerCase()}
-          </span>
-        )}
-        {effect.range > 0 && (
-          <span className="stat-pill stat-pill-muted">{effect.range}m range</span>
-        )}
-      </div>
-
-      <div className="content-card-meta">
-        <span className="tag-muted">{effect.targeting}</span>
-        {splashRadius != null && splashRadius > 0 && (
-          <span className="tag-muted">AoE {splashRadius}m</span>
-        )}
-        {effect.required_weapon_types.map((w) => (
-          <span key={w} className="tag-muted">
-            {w}
-          </span>
-        ))}
-        {isHeal && <span className="tag">Heal</span>}
-      </div>
-    </article>
+      />
+    </section>
   )
 }
 
-const ITEM_GROUP_ICONS: Record<string, ReactNode> = {
-  Weapon: (
+// Keyed by item_class id (lowercase, matching necro_content.item_classes.id).
+const ITEM_CLASS_ICONS: Record<string, ReactNode> = {
+  weapon: (
     <>
       <path d="M5 19L19 5" />
       <path d="M16 5h4v4" />
       <path d="M3 21l4-4" />
     </>
   ),
-  Armor: (
+  armor: (
     <>
       <path d="M12 3l8 3v6c0 5-4 8-8 9-4-1-8-4-8-9V6z" />
     </>
   ),
-  Jewelry: (
+  jewelry: (
     <>
       <path d="M12 4l4 5-4 11-4-11z" />
       <path d="M8 9h8" />
     </>
   ),
-  Tool: (
+  tool: (
     <>
       <path d="M14 4l6 6-3 3-6-6z" />
       <path d="M11 7L4 14l3 3 7-7" />
       <path d="M4 14l-1 4 4-1" />
     </>
   ),
-  Consumable: (
+  consumable: (
     <>
       <path d="M9 3h6v3l3 5v8a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-8l3-5z" />
       <path d="M6 14h12" />
     </>
   ),
-  Material: (
+  material: (
     <>
       <path d="M5 8l7-4 7 4-7 4z" />
       <path d="M5 8v8l7 4" />
       <path d="M19 8v8l-7 4" />
     </>
   ),
-  Container: (
+  container: (
     <>
       <path d="M5 8h14l-1 12H6z" />
       <path d="M9 8V5a3 3 0 0 1 6 0v3" />
     </>
   ),
-  Currency: (
+  currency: (
     <>
       <circle cx="12" cy="12" r="8" />
       <path d="M9 10c0-1.5 1.3-2 3-2s3 .5 3 2-1 1.8-3 2-3 .5-3 2 1.3 2 3 2 3-.5 3-2" />
@@ -1667,18 +1777,7 @@ const ITEM_GROUP_ICONS: Record<string, ReactNode> = {
   ),
 }
 
-const ITEM_GROUP_ORDER = [
-  'Weapon',
-  'Armor',
-  'Jewelry',
-  'Tool',
-  'Consumable',
-  'Material',
-  'Container',
-  'Currency',
-]
-
-function ItemGroupIcon({ group }: { group: string }) {
+function ItemClassIcon({ itemClass }: { itemClass: string }) {
   return (
     <svg
       width="20"
@@ -1692,58 +1791,252 @@ function ItemGroupIcon({ group }: { group: string }) {
       className="item-icon"
       aria-hidden="true"
     >
-      {ITEM_GROUP_ICONS[group] ?? <circle cx="12" cy="12" r="6" />}
+      {ITEM_CLASS_ICONS[itemClass] ?? <circle cx="12" cy="12" r="6" />}
     </svg>
   )
 }
 
-function ItemTypesSection() {
-  const types = useAsyncList<ItemType>(() => listItemTypes())
+// Renders the rich metadata of an action/spell effect as a compact
+// "Key: Value · Key: Value" row beneath the prose description. Knows how to
+// format common fields (amount-with-percent, radius-in-meters, etc.) and
+// quietly skips fields it doesn't recognise so a future effect type with a
+// new field still renders the basics.
+function EffectMeta({ effect }: { effect: ActionEffect }) {
+  const entries: Array<[string, string]> = []
+
+  if (typeof effect.type === 'string' && effect.type) {
+    entries.push(['Type', effect.type])
+  }
+  if (typeof effect.amount === 'number') {
+    const isPercent = effect.modifier_type === 'Percent'
+    entries.push(['Amount', `${effect.amount}${isPercent ? '%' : ''}`])
+  }
+  if (typeof effect.school === 'string' && effect.school) {
+    entries.push(['School', effect.school])
+  }
+  if (typeof effect.stat === 'string' && effect.stat) {
+    entries.push(['Stat', effect.stat])
+  }
+  if (typeof effect.target === 'string' && effect.target) {
+    entries.push(['Target', effect.target])
+  }
+  if (typeof effect.radius === 'number') {
+    entries.push(['Radius', `${effect.radius}m`])
+  }
+  if (typeof effect.duration === 'number') {
+    entries.push(['Duration', `${effect.duration}s`])
+  }
+
+  if (entries.length === 0) return null
+  return (
+    <div className="effect-meta">
+      {entries.map(([k, v], i) => (
+        <span key={k} className="effect-meta-pair">
+          <span className="effect-meta-key">{k}:</span>{' '}
+          <span className="effect-meta-value">{v}</span>
+          {i < entries.length - 1 && (
+            <span className="effect-meta-sep" aria-hidden="true">
+              ·
+            </span>
+          )}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function ItemClassesSection() {
+  const classes = useAsyncList<ItemClass>(() => listItemClasses())
+  const subclasses = useAsyncList<ItemSubclass>(() => listItemSubclasses())
+
+  const subclassCount = new Map<string, number>()
+  for (const sc of subclasses ?? []) {
+    subclassCount.set(sc.item_class, (subclassCount.get(sc.item_class) ?? 0) + 1)
+  }
+
+  const columns: DataTableColumn<ItemClass>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (c) => (
+        <>
+          <ItemClassIcon itemClass={c.id} />
+          <span className="data-cell-name">{c.display_name}</span>
+        </>
+      ),
+      sortKey: (c) => c.sort_order,
+    },
+  ]
 
   return (
     <section className="settings-section">
       <header className="settings-section-header">
-        <h2>Item Types</h2>
+        <h2>Item Classes</h2>
         <p>
-          The catalog of item shapes the game knows about — what slot they equip
-          to, whether they stack, and which group the inventory UI files them under.
+          Top-level item categorisation — Weapon, Armor, Consumable, etc.
+          Mirrors WoW's ItemClass concept. Click a row for details.
         </p>
       </header>
+      <DataTable<ItemClass>
+        rows={classes}
+        columns={columns}
+        rowKey={(c) => c.id}
+        searchPlaceholder="Search item classes…"
+        searchKeys={(c) => [c.display_name, c.id, c.description]}
+        emptyText="No item classes defined yet."
+        defaultSort={{ columnId: 'name', direction: 'asc' }}
+        expandedContent={(c) => (
+          <dl className="data-expansion">
+            <dt>ID</dt>
+            <dd><code className="data-table-mono">{c.id}</code></dd>
+            <dt>Subclasses</dt>
+            <dd>{subclassCount.get(c.id) ?? 0}</dd>
+            <dt>Order</dt>
+            <dd>{c.sort_order}</dd>
+            {c.description && (
+              <>
+                <dt>Description</dt>
+                <dd>{c.description}</dd>
+              </>
+            )}
+          </dl>
+        )}
+      />
+    </section>
+  )
+}
 
-      {types === null ? (
-        <p className="text-dim">Loading…</p>
-      ) : types.length === 0 ? (
-        <p className="text-dim">No item types defined yet.</p>
-      ) : (
+function ItemSubclassesSection() {
+  const subclasses = useAsyncList<ItemSubclass>(() => listItemSubclasses())
+  const classes = useAsyncList<ItemClass>(() => listItemClasses())
+
+  const classById = new Map((classes ?? []).map((c) => [c.id, c]))
+
+  // Composite sort key: class sort_order (zero-padded so it sorts as text),
+  // then subclass display_name. Keeps subclasses grouped under their class
+  // in the canonical class order (Weapon, Armor, Jewelry, …).
+  function classThenName(sc: ItemSubclass): string {
+    const cls = classById.get(sc.item_class)
+    const order = String(cls?.sort_order ?? 9999).padStart(5, '0')
+    return `${order}::${sc.display_name.toLowerCase()}`
+  }
+
+  const columns: DataTableColumn<ItemSubclass>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (sc) => (
         <>
-          {ITEM_GROUP_ORDER.map((group) => {
-            const groupTypes = types.filter((t) => t.group === group)
-            if (groupTypes.length === 0) return null
-            return (
-              <div key={group} className="content-subgroup">
-                <h3 className="content-subgroup-heading">{group}</h3>
-                <div className="content-card-grid">
-                  {groupTypes.map((t) => (
-                    <article key={t.name} className="content-card">
-                      <header className="content-card-header">
-                        <h3 className="content-card-title">
-                          <ItemGroupIcon group={group} />
-                          {t.display_name}
-                        </h3>
-                        <span className="content-card-id">{t.name}</span>
-                      </header>
-                      <div className="content-card-meta">
-                        <span className="tag-muted">{t.equip_slot}</span>
-                        {t.stackable && <span className="tag-muted">Stackable</span>}
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              </div>
-            )
-          })}
+          <ItemClassIcon itemClass={sc.item_class} />
+          <span className="data-cell-name">{sc.display_name}</span>
         </>
-      )}
+      ),
+      sortKey: classThenName,
+    },
+    {
+      id: 'class',
+      header: 'Class',
+      cell: (sc) => classById.get(sc.item_class)?.display_name ?? sc.item_class,
+      sortKey: classThenName,
+    },
+  ]
+
+  return (
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Item Subclasses</h2>
+        <p>
+          The specific shape an item takes within its class — Sword, Helmet,
+          Bow, etc. Mirrors WoW's ItemSubClass concept. Click a row for
+          details.
+        </p>
+      </header>
+      <DataTable<ItemSubclass>
+        rows={subclasses}
+        columns={columns}
+        rowKey={(sc) => sc.name}
+        searchPlaceholder="Search item subclasses…"
+        searchKeys={(sc) => [
+          sc.display_name,
+          sc.name,
+          sc.item_class,
+          classById.get(sc.item_class)?.display_name ?? '',
+          sc.inventory_slot,
+        ]}
+        emptyText="No item subclasses defined yet."
+        defaultSort={{ columnId: 'class', direction: 'asc' }}
+        expandedContent={(sc) => (
+          <dl className="data-expansion">
+            <dt>ID</dt>
+            <dd><code className="data-table-mono">{sc.name}</code></dd>
+            <dt>Class</dt>
+            <dd>{sc.item_class}</dd>
+            <dt>Inventory Slot</dt>
+            <dd>{sc.inventory_slot}</dd>
+            <dt>Stackable</dt>
+            <dd>{sc.stackable ? 'Yes' : 'No'}</dd>
+          </dl>
+        )}
+      />
+    </section>
+  )
+}
+
+function InventorySlotsSection() {
+  const slots = useAsyncList<InventorySlot>(() => listInventorySlots())
+  const subclasses = useAsyncList<ItemSubclass>(() => listItemSubclasses())
+
+  const slotUsage = new Map<string, number>()
+  for (const sc of subclasses ?? []) {
+    slotUsage.set(sc.inventory_slot, (slotUsage.get(sc.inventory_slot) ?? 0) + 1)
+  }
+
+  const columns: DataTableColumn<InventorySlot>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (s) => <span className="data-cell-name">{s.display_name}</span>,
+      sortKey: (s) => s.sort_order,
+    },
+  ]
+
+  return (
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Inventory Slots</h2>
+        <p>
+          Where each piece of gear lives on the character. Sorted anatomically
+          top-down, with two-handed weapons and the inventory-only bucket at the
+          end. Click a row for details.
+        </p>
+      </header>
+      <DataTable<InventorySlot>
+        rows={slots}
+        columns={columns}
+        rowKey={(s) => s.id}
+        searchPlaceholder="Search slots…"
+        searchKeys={(s) => [s.display_name, s.id, s.body_region, s.description]}
+        emptyText="No inventory slots defined yet."
+        defaultSort={{ columnId: 'name', direction: 'asc' }}
+        expandedContent={(s) => (
+          <dl className="data-expansion">
+            <dt>ID</dt>
+            <dd><code className="data-table-mono">{s.id}</code></dd>
+            <dt>Region</dt>
+            <dd>{capitalize(s.body_region)}</dd>
+            <dt>Subclasses</dt>
+            <dd>{slotUsage.get(s.id) ?? 0}</dd>
+            <dt>Order</dt>
+            <dd>{s.sort_order}</dd>
+            {s.description && (
+              <>
+                <dt>Description</dt>
+                <dd>{s.description}</dd>
+              </>
+            )}
+          </dl>
+        )}
+      />
     </section>
   )
 }
@@ -1758,595 +2051,1008 @@ function formatStation(tag: string): string {
 function RecipesSection() {
   const recipes = useAsyncList<Recipe>(() => listRecipes())
   const items = useAsyncList<Item>(() => listItems())
-  const [query, setQuery] = useState('')
 
   const itemNameById = new Map((items ?? []).map((i) => [i.id, i.item_name]))
+  const nameOf = (id: string) => itemNameById.get(id) ?? id
 
-  const filtered =
-    recipes?.filter((r) => {
-      if (!query) return true
-      const haystack = `${r.display_name} ${r.id} ${r.description} ${r.skill}`.toLowerCase()
-      return haystack.includes(query.toLowerCase())
-    }) ?? null
+  function formatCraftTime(seconds: number): string {
+    return seconds % 1 === 0
+      ? `${seconds.toFixed(0)}s`
+      : `${seconds.toFixed(1)}s`
+  }
 
-  const skillsInOrder = Array.from(new Set((filtered ?? []).map((r) => r.skill))).sort()
+  const columns: DataTableColumn<Recipe>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (r) => <span className="data-cell-name">{r.display_name}</span>,
+      sortKey: (r) => r.display_name.toLowerCase(),
+    },
+  ]
 
   return (
     <section className="settings-section">
       <header className="settings-section-header">
         <h2>Recipes</h2>
         <p>
-          Crafting blueprints that turn ingredients into finished items at a station.
-          Grouped by the skill they train.
+          Crafting blueprints that turn ingredients into finished items at a
+          station. Click a row for details.
         </p>
       </header>
-
-      <input
-        type="search"
-        className="content-search"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search recipes…"
-        aria-label="Search recipes"
-      />
-
-      {filtered === null ? (
-        <p className="text-dim">Loading…</p>
-      ) : filtered.length === 0 ? (
-        <p className="text-dim">
-          {query ? `No recipes match "${query}".` : 'No recipes defined yet.'}
-        </p>
-      ) : (
-        <>
-          {skillsInOrder.map((skill) => {
-            const group = filtered.filter((r) => r.skill === skill)
-            if (group.length === 0) return null
-            return (
-              <div key={skill} className="content-subgroup">
-                <h3 className="content-subgroup-heading">{formatStation(skill)}</h3>
-                <div className="content-card-grid">
-                  {group.map((r) => (
-                    <RecipeCard key={r.id} recipe={r} itemNameById={itemNameById} />
-                  ))}
-                </div>
-              </div>
-            )
-          })}
-        </>
-      )}
-    </section>
-  )
-}
-
-function RecipeCard({
-  recipe,
-  itemNameById,
-}: {
-  recipe: Recipe
-  itemNameById: Map<string, string>
-}) {
-  const nameOf = (id: string) => itemNameById.get(id) ?? id
-  return (
-    <article className="content-card">
-      <header className="content-card-header">
-        <h3 className="content-card-title">{recipe.display_name}</h3>
-        <span className="content-card-id">{recipe.id}</span>
-      </header>
-      {recipe.description && <p className="content-card-body">{recipe.description}</p>}
-
-      <div className="content-card-stats">
-        <span className="stat-pill stat-pill-muted">
-          Lv {recipe.required_skill_level}
-        </span>
-        <span className="stat-pill stat-pill-muted">
-          {formatStation(recipe.station_tag)}
-        </span>
-        <span className="stat-pill stat-pill-muted">
-          {recipe.craft_time_seconds % 1 === 0
-            ? `${recipe.craft_time_seconds.toFixed(0)}s`
-            : `${recipe.craft_time_seconds.toFixed(1)}s`}
-        </span>
-        {recipe.xp_reward > 0 && (
-          <span className="stat-pill">+{recipe.xp_reward} XP</span>
+      <DataTable<Recipe>
+        rows={recipes}
+        columns={columns}
+        rowKey={(r) => r.id}
+        searchPlaceholder="Search recipes…"
+        searchKeys={(r) => [
+          r.display_name,
+          r.id,
+          r.description,
+          r.skill,
+          r.station_tag,
+          ...r.outputs.map((o) => nameOf(o.itemId)),
+          ...r.ingredients.map((i) => nameOf(i.itemId)),
+        ]}
+        emptyText="No recipes defined yet."
+        defaultSort={{ columnId: 'name', direction: 'asc' }}
+        expandedContent={(r) => (
+          <dl className="data-expansion">
+            <dt>ID</dt>
+            <dd><code className="data-table-mono">{r.id}</code></dd>
+            <dt>Skill</dt>
+            <dd>{formatStation(r.skill)}</dd>
+            <dt>Required Level</dt>
+            <dd>{r.required_skill_level}</dd>
+            <dt>Station</dt>
+            <dd>{formatStation(r.station_tag)}</dd>
+            <dt>Craft Time</dt>
+            <dd>{formatCraftTime(r.craft_time_seconds)}</dd>
+            {r.xp_reward > 0 && (
+              <>
+                <dt>XP Reward</dt>
+                <dd>+{r.xp_reward}</dd>
+              </>
+            )}
+            {r.ingredients.length > 0 && (
+              <>
+                <dt>Ingredients</dt>
+                <dd>
+                  <ul className="data-expansion-list">
+                    {r.ingredients.map((ing, i) => (
+                      <li key={i}>
+                        {ing.quantity}× {nameOf(ing.itemId)}
+                      </li>
+                    ))}
+                  </ul>
+                </dd>
+              </>
+            )}
+            {r.outputs.length > 0 && (
+              <>
+                <dt>Produces</dt>
+                <dd>
+                  <ul className="data-expansion-list">
+                    {r.outputs.map((out, i) => (
+                      <li key={i} className="data-expansion-positive">
+                        {out.quantity}× {nameOf(out.itemId)}
+                      </li>
+                    ))}
+                  </ul>
+                </dd>
+              </>
+            )}
+            {r.description && (
+              <>
+                <dt>Description</dt>
+                <dd>{r.description}</dd>
+              </>
+            )}
+          </dl>
         )}
-      </div>
-
-      {recipe.ingredients.length > 0 && (
-        <div className="content-card-bonus-group">
-          <div className="content-card-bonus-heading">Ingredients</div>
-          <ul className="content-card-bonuses">
-            {recipe.ingredients.map((ing, i) => (
-              <li key={i}>
-                {ing.quantity}× {nameOf(ing.itemId)}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {recipe.outputs.length > 0 && (
-        <div className="content-card-bonus-group">
-          <div className="content-card-bonus-heading">Produces</div>
-          <ul className="content-card-bonuses">
-            {recipe.outputs.map((out, i) => (
-              <li key={i} className="content-card-bonus-positive">
-                {out.quantity}× {nameOf(out.itemId)}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </article>
+      />
+    </section>
   )
 }
 
 function RaritiesSection() {
   const rarities = useAsyncList<Rarity>(() => listRarities())
+  const items = useAsyncList<Item>(() => listItems())
+
+  const rarityUsage = new Map<string, number>()
+  for (const i of items ?? []) {
+    rarityUsage.set(i.rarity, (rarityUsage.get(i.rarity) ?? 0) + 1)
+  }
+
+  const columns: DataTableColumn<Rarity>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (r) => (
+        <>
+          <span
+            className="rarity-swatch"
+            style={{ background: r.display_color }}
+            aria-hidden="true"
+          />
+          <span
+            className="data-cell-name"
+            style={{ color: r.display_color }}
+          >
+            {r.display_name}
+          </span>
+        </>
+      ),
+      sortKey: (r) => r.sort_order,
+    },
+  ]
+
   return (
-    <ContentSection
-      title="Rarities"
-      description="The tier ladder loot is colored by. Higher tiers carry more bonuses, glow brighter on the ground, and show up much less often."
-      items={rarities}
-      emptyText="No rarities defined yet."
-    >
-      {rarities?.map((r) => (
-        <article key={r.id} className="content-card">
-          <header className="content-card-header">
-            <h3
-              className="content-card-title"
-              style={{ color: r.display_color }}
-            >
-              <span
-                className="rarity-swatch"
-                style={{ background: r.display_color }}
-                aria-hidden="true"
-              />
-              {r.display_name}
-            </h3>
-            <span className="content-card-id">{r.id}</span>
-          </header>
-          {r.description && <p className="content-card-body">{r.description}</p>}
-          <div className="content-card-meta">
-            <span className="tag-muted">{r.display_color.toUpperCase()}</span>
-            {r.show_ground_glow ? (
-              <span
-                className="tag"
-                style={{
-                  color: r.display_color,
-                  borderColor: r.display_color + '55',
-                  background: r.display_color + '14',
-                }}
-              >
-                Glow ×{r.ground_glow_brightness}
-              </span>
-            ) : (
-              <span className="tag-muted">No ground glow</span>
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Rarities</h2>
+        <p>
+          The tier ladder loot is colored by. Higher tiers carry more bonuses,
+          glow brighter on the ground, and show up much less often. Click a row
+          for details.
+        </p>
+      </header>
+      <DataTable<Rarity>
+        rows={rarities}
+        columns={columns}
+        rowKey={(r) => r.id}
+        searchPlaceholder="Search rarities…"
+        searchKeys={(r) => [r.display_name, r.id, r.description]}
+        emptyText="No rarities defined yet."
+        defaultSort={{ columnId: 'name', direction: 'asc' }}
+        expandedContent={(r) => (
+          <dl className="data-expansion">
+            <dt>ID</dt>
+            <dd><code className="data-table-mono">{r.id}</code></dd>
+            <dt>Color</dt>
+            <dd>
+              <code className="data-table-mono">
+                {r.display_color.toUpperCase()}
+              </code>
+            </dd>
+            <dt>Tier</dt>
+            <dd>{r.sort_order}</dd>
+            <dt>Ground Glow</dt>
+            <dd>{r.show_ground_glow ? `×${r.ground_glow_brightness}` : 'No'}</dd>
+            <dt>Items at this rarity</dt>
+            <dd>{rarityUsage.get(r.id) ?? 0}</dd>
+            {r.description && (
+              <>
+                <dt>Description</dt>
+                <dd>{r.description}</dd>
+              </>
             )}
-          </div>
-        </article>
-      ))}
-    </ContentSection>
+          </dl>
+        )}
+      />
+    </section>
   )
 }
 
 function ItemsSection() {
   const items = useAsyncList<Item>(() => listItems())
   const rarities = useAsyncList<Rarity>(() => listRarities())
-  const itemTypes = useAsyncList<ItemType>(() => listItemTypes())
-  const [query, setQuery] = useState('')
+  const classes = useAsyncList<ItemClass>(() => listItemClasses())
+  const subclasses = useAsyncList<ItemSubclass>(() => listItemSubclasses())
 
   const rarityById = new Map((rarities ?? []).map((r) => [r.id, r]))
-  const typeById = new Map((itemTypes ?? []).map((t) => [t.name, t]))
+  const classById = new Map((classes ?? []).map((c) => [c.id, c]))
+  const subclassById = new Map((subclasses ?? []).map((sc) => [sc.name, sc]))
 
-  const filtered =
-    items?.filter((i) => {
-      if (!query) return true
-      const haystack = `${i.item_name} ${i.id} ${i.description}`.toLowerCase()
-      return haystack.includes(query.toLowerCase())
-    }) ?? null
+  function classFor(i: Item): ItemClass | undefined {
+    const sc = subclassById.get(i.item_subclass)
+    return sc ? classById.get(sc.item_class) : undefined
+  }
+
+  const columns: DataTableColumn<Item>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (i) => {
+        const rarity = rarityById.get(i.rarity)
+        return (
+          <span
+            className="data-cell-name"
+            style={{ color: rarity?.display_color ?? 'inherit' }}
+          >
+            {i.item_name}
+          </span>
+        )
+      },
+      sortKey: (i) => i.item_name.toLowerCase(),
+    },
+    {
+      id: 'class',
+      header: 'Class',
+      cell: (i) => classFor(i)?.display_name ?? '—',
+      sortKey: (i) => classFor(i)?.display_name.toLowerCase() ?? '',
+    },
+    {
+      id: 'subclass',
+      header: 'Subclass',
+      cell: (i) =>
+        subclassById.get(i.item_subclass)?.display_name ?? i.item_subclass,
+      sortKey: (i) =>
+        (subclassById.get(i.item_subclass)?.display_name ?? i.item_subclass)
+          .toLowerCase(),
+    },
+  ]
 
   return (
     <section className="settings-section">
       <header className="settings-section-header">
         <h2>Items</h2>
         <p>
-          Equipment, tools, currency, and other things you can carry. Color-coded by
-          rarity (white → orange).
+          Equipment, tools, currency, and other things you can carry. Color-coded
+          by rarity. Click a row for details.
         </p>
       </header>
-
-      <input
-        type="search"
-        className="content-search"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search items…"
-        aria-label="Search items"
+      <DataTable<Item>
+        rows={items}
+        columns={columns}
+        rowKey={(i) => i.id}
+        searchPlaceholder="Search items…"
+        searchKeys={(i) => [
+          i.item_name,
+          i.id,
+          i.description,
+          subclassById.get(i.item_subclass)?.display_name ?? '',
+          rarityById.get(i.rarity)?.display_name ?? '',
+        ]}
+        emptyText="No items defined yet."
+        defaultSort={{ columnId: 'name', direction: 'asc' }}
+        expandedContent={(i) => {
+          const rarity = rarityById.get(i.rarity)
+          const subclass = subclassById.get(i.item_subclass)
+          const isWeapon = i.weapon_min_damage != null
+          return (
+            <dl className="data-expansion">
+              <dt>ID</dt>
+              <dd><code className="data-table-mono">{i.id}</code></dd>
+              <dt>Subclass</dt>
+              <dd>{subclass?.display_name ?? i.item_subclass}</dd>
+              {subclass?.item_class && (
+                <>
+                  <dt>Class</dt>
+                  <dd>{subclass.item_class}</dd>
+                </>
+              )}
+              <dt>Inventory Slot</dt>
+              <dd>{i.inventory_slot}</dd>
+              <dt>Rarity</dt>
+              <dd>
+                <span style={{ color: rarity?.display_color ?? 'inherit' }}>
+                  {rarity?.display_name ?? i.rarity}
+                </span>
+              </dd>
+              {isWeapon && (
+                <>
+                  <dt>Damage</dt>
+                  <dd>
+                    {i.weapon_min_damage}–{i.weapon_max_damage}
+                  </dd>
+                </>
+              )}
+              {isWeapon && i.weapon_speed != null && (
+                <>
+                  <dt>Speed</dt>
+                  <dd>{i.weapon_speed}s</dd>
+                </>
+              )}
+              {i.weight > 0 && (
+                <>
+                  <dt>Weight</dt>
+                  <dd>{i.weight}</dd>
+                </>
+              )}
+              {i.required_skill_level > 0 && (
+                <>
+                  <dt>Required Level</dt>
+                  <dd>{i.required_skill_level}</dd>
+                </>
+              )}
+              {i.is_stackable && i.max_stack_size > 1 && (
+                <>
+                  <dt>Max Stack</dt>
+                  <dd>{i.max_stack_size.toLocaleString()}</dd>
+                </>
+              )}
+              <dt>Craftable</dt>
+              <dd>{i.is_craftable ? 'Yes' : 'No'}</dd>
+              {i.description && (
+                <>
+                  <dt>Description</dt>
+                  <dd>{i.description}</dd>
+                </>
+              )}
+              {i.ability_bonuses.length > 0 && (
+                <>
+                  <dt>Bonuses</dt>
+                  <dd>
+                    <ul className="data-expansion-list">
+                      {i.ability_bonuses.map((b, idx) => (
+                        <li
+                          key={idx}
+                          className={
+                            b.value > 0
+                              ? 'data-expansion-positive'
+                              : b.value < 0
+                                ? 'data-expansion-negative'
+                                : ''
+                          }
+                        >
+                          {b.description}
+                        </li>
+                      ))}
+                    </ul>
+                  </dd>
+                </>
+              )}
+            </dl>
+          )
+        }}
       />
-
-      {filtered === null ? (
-        <p className="text-dim">Loading…</p>
-      ) : filtered.length === 0 ? (
-        <p className="text-dim">
-          {query ? `No items match "${query}".` : 'No items defined yet.'}
-        </p>
-      ) : (
-        <>
-          {ITEM_GROUP_ORDER.map((group) => {
-            const groupItems = filtered.filter(
-              (i) => typeById.get(i.item_type)?.group === group,
-            )
-            if (groupItems.length === 0) return null
-            return (
-              <ItemGroup
-                key={group}
-                group={group}
-                items={groupItems}
-                rarityById={rarityById}
-                typeById={typeById}
-              />
-            )
-          })}
-        </>
-      )}
     </section>
   )
 }
 
-function ItemGroup({
-  group,
-  items,
-  rarityById,
-  typeById,
-}: {
-  group: string
-  items: Item[]
-  rarityById: Map<string, Rarity>
-  typeById: Map<string, ItemType>
-}) {
-  return (
-    <div className="content-subgroup">
-      <h3 className="content-subgroup-heading">{group}</h3>
-      <div className="content-card-grid">
-        {items.map((i) => {
-          const rarity = rarityById.get(i.rarity)
-          const type = typeById.get(i.item_type)
-          const isWeapon = i.weapon_min_damage != null
-          return (
-            <article key={i.id} className="content-card">
-              <header className="content-card-header">
-                <h3
-                  className="content-card-title"
-                  style={{ color: rarity?.display_color ?? 'inherit' }}
-                >
-                  <ItemGroupIcon group={group} />
-                  {i.item_name}
-                </h3>
-                <span className="content-card-id">{i.id}</span>
-              </header>
-              {i.description && <p className="content-card-body">{i.description}</p>}
-              {i.ability_bonuses.length > 0 && (
-                <BonusList title="Bonuses" entries={i.ability_bonuses} />
-              )}
-
-              <div className="content-card-stats">
-                {isWeapon && (
-                  <span className="stat-pill">
-                    {i.weapon_min_damage}–{i.weapon_max_damage} dmg
-                  </span>
-                )}
-                {isWeapon && i.weapon_speed != null && (
-                  <span className="stat-pill stat-pill-muted">
-                    Spd {i.weapon_speed}s
-                  </span>
-                )}
-                {i.weight > 0 && (
-                  <span className="stat-pill stat-pill-muted">
-                    Wt {i.weight}
-                  </span>
-                )}
-                {i.is_stackable && i.max_stack_size > 1 && (
-                  <span className="stat-pill stat-pill-muted">
-                    Stack {i.max_stack_size.toLocaleString()}
-                  </span>
-                )}
-                {i.required_skill_level > 0 && (
-                  <span className="stat-pill stat-pill-muted">
-                    Lv {i.required_skill_level}
-                  </span>
-                )}
-              </div>
-
-              <div className="content-card-meta">
-                {type && <span className="tag-muted">{type.display_name}</span>}
-                {i.slot && i.slot !== 'InventoryOnly' && (
-                  <span className="tag-muted">{i.slot}</span>
-                )}
-                {rarity && (
-                  <span
-                    className="tag-muted"
-                    style={{
-                      color: rarity.display_color,
-                      borderColor: rarity.display_color + '55',
-                    }}
-                  >
-                    {rarity.display_name}
-                  </span>
-                )}
-                {i.is_craftable && (
-                  <span className="tag" style={{
-                    color: '#78dc8c',
-                    borderColor: 'rgba(120, 220, 140, 0.3)',
-                    background: 'rgba(120, 220, 140, 0.10)',
-                  }}>
-                    Craftable
-                  </span>
-                )}
-              </div>
-            </article>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-function matchesEffectQuery(effect: Action, query: string): boolean {
-  if (!query) return true
-  const haystack = `${effect.ability_name} ${effect.asset_name} ${effect.description}`.toLowerCase()
-  return haystack.includes(query.toLowerCase())
-}
-
 function ActionsSection() {
   const actions = useAsyncList<Action>(() => listActions())
-  const [query, setQuery] = useState('')
-  const filtered = actions?.filter((a) => matchesEffectQuery(a, query)) ?? null
+
+  const columns: DataTableColumn<Action>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (a) => <span className="data-cell-name">{a.ability_name}</span>,
+      sortKey: (a) => a.ability_name.toLowerCase(),
+    },
+  ]
 
   return (
-    <ContentSection
-      title="Actions"
-      description="Physical things characters do with weapons — strikes, blocks, shoves, technique-based moves. Damage comes from the equipped weapon."
-      items={filtered}
-      emptyText={query ? `No actions match "${query}".` : 'No actions defined yet.'}
-      headerExtra={
-        <input
-          type="search"
-          className="content-search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search actions…"
-          aria-label="Search actions"
-        />
-      }
-    >
-      {filtered?.map((a) => (
-        <ActiveEffectCard key={a.asset_name} effect={a} variant="action" />
-      ))}
-    </ContentSection>
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Actions</h2>
+        <p>
+          Physical things characters do with weapons — strikes, blocks, shoves,
+          technique-based moves. Damage comes from the equipped weapon. Click a
+          row for details.
+        </p>
+      </header>
+      <DataTable<Action>
+        rows={actions}
+        columns={columns}
+        rowKey={(a) => a.asset_name}
+        searchPlaceholder="Search actions…"
+        searchKeys={(a) => [
+          a.ability_name,
+          a.asset_name,
+          a.description,
+          a.type,
+          a.targeting,
+        ]}
+        emptyText="No actions defined yet."
+        defaultSort={{ columnId: 'name', direction: 'asc' }}
+        expandedContent={(a) => (
+          <dl className="data-expansion">
+            <dt>ID</dt>
+            <dd><code className="data-table-mono">{a.asset_name}</code></dd>
+            <dt>Type</dt>
+            <dd>{a.type}</dd>
+            <dt>Targeting</dt>
+            <dd>{a.targeting}</dd>
+            {a.resource_cost > 0 && (
+              <>
+                <dt>Cost</dt>
+                <dd>
+                  {a.resource_cost} {a.resource_type}
+                </dd>
+              </>
+            )}
+            <dt>Cast Time</dt>
+            <dd>{a.cast_time > 0 ? `${a.cast_time}s` : 'Instant'}</dd>
+            {a.cooldown > 0 && (
+              <>
+                <dt>Cooldown</dt>
+                <dd>{a.cooldown}s</dd>
+              </>
+            )}
+            {a.range > 0 && (
+              <>
+                <dt>Range</dt>
+                <dd>{a.range}m</dd>
+              </>
+            )}
+            {a.required_weapon_types.length > 0 && (
+              <>
+                <dt>Required Weapons</dt>
+                <dd>{a.required_weapon_types.join(', ')}</dd>
+              </>
+            )}
+            {a.description && (
+              <>
+                <dt>Description</dt>
+                <dd>{a.description}</dd>
+              </>
+            )}
+            {a.effects.length > 0 && (
+              <>
+                <dt>Effects</dt>
+                <dd>
+                  <ul className="data-expansion-list">
+                    {a.effects
+                      .filter(
+                        (eff) =>
+                          typeof eff.description === 'string' && eff.description,
+                      )
+                      .map((eff, i) => (
+                        <li key={i}>
+                          <div>{eff.description}</div>
+                          <EffectMeta effect={eff} />
+                        </li>
+                      ))}
+                  </ul>
+                </dd>
+              </>
+            )}
+          </dl>
+        )}
+      />
+    </section>
   )
 }
 
 function SpellsSection() {
   const spells = useAsyncList<Spell>(() => listSpells())
-  const [query, setQuery] = useState('')
-  const filtered = spells?.filter((s) => matchesEffectQuery(s, query)) ?? null
+
+  const columns: DataTableColumn<Spell>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (s) => <span className="data-cell-name">{s.ability_name}</span>,
+      sortKey: (s) => s.ability_name.toLowerCase(),
+    },
+  ]
 
   return (
-    <ContentSection
-      title="Spells"
-      description="Magical effects — fire, frost, healing, summons, wards. Damage and school are intrinsic to the spell."
-      items={filtered}
-      emptyText={query ? `No spells match "${query}".` : 'No spells defined yet.'}
-      headerExtra={
-        <input
-          type="search"
-          className="content-search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search spells…"
-          aria-label="Search spells"
-        />
-      }
-    >
-      {filtered?.map((s) => (
-        <ActiveEffectCard key={s.asset_name} effect={s} variant="spell" />
-      ))}
-    </ContentSection>
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Spells</h2>
+        <p>
+          Magical effects — fire, frost, healing, summons, wards. Damage and
+          school are intrinsic to the spell. Click a row for details.
+        </p>
+      </header>
+      <DataTable<Spell>
+        rows={spells}
+        columns={columns}
+        rowKey={(s) => s.asset_name}
+        searchPlaceholder="Search spells…"
+        searchKeys={(s) => [
+          s.ability_name,
+          s.asset_name,
+          s.description,
+          s.damage_school ?? '',
+        ]}
+        emptyText="No spells defined yet."
+        defaultSort={{ columnId: 'name', direction: 'asc' }}
+        expandedContent={(s) => (
+          <dl className="data-expansion">
+            <dt>ID</dt>
+            <dd><code className="data-table-mono">{s.asset_name}</code></dd>
+            {s.damage_school && (
+              <>
+                <dt>School</dt>
+                <dd>{s.damage_school}</dd>
+              </>
+            )}
+            {s.damage > 0 && (
+              <>
+                <dt>Damage</dt>
+                <dd>
+                  {s.damage}
+                  {s.is_heal ? ' (heal)' : ''}
+                </dd>
+              </>
+            )}
+            {s.resource_cost > 0 && (
+              <>
+                <dt>Cost</dt>
+                <dd>
+                  {s.resource_cost} {s.resource_type}
+                </dd>
+              </>
+            )}
+            <dt>Cast Time</dt>
+            <dd>{s.cast_time > 0 ? `${s.cast_time}s` : 'Instant'}</dd>
+            {s.cooldown > 0 && (
+              <>
+                <dt>Cooldown</dt>
+                <dd>{s.cooldown}s</dd>
+              </>
+            )}
+            {s.range > 0 && (
+              <>
+                <dt>Range</dt>
+                <dd>{s.range}m</dd>
+              </>
+            )}
+            <dt>Targeting</dt>
+            <dd>{s.targeting}</dd>
+            {s.splash_radius != null && s.splash_radius > 0 && (
+              <>
+                <dt>Splash Radius</dt>
+                <dd>{s.splash_radius}m</dd>
+              </>
+            )}
+            {s.description && (
+              <>
+                <dt>Description</dt>
+                <dd>{s.description}</dd>
+              </>
+            )}
+            {s.effects.length > 0 && (
+              <>
+                <dt>Effects</dt>
+                <dd>
+                  <ul className="data-expansion-list">
+                    {s.effects
+                      .filter(
+                        (eff) =>
+                          typeof eff.description === 'string' && eff.description,
+                      )
+                      .map((eff, i) => (
+                        <li key={i}>
+                          <div>{eff.description}</div>
+                          <EffectMeta effect={eff} />
+                        </li>
+                      ))}
+                  </ul>
+                </dd>
+              </>
+            )}
+          </dl>
+        )}
+      />
+    </section>
   )
 }
 
 function AbilitiesSection() {
   const abilities = useAsyncList<Ability>(() => listAbilities())
+
+  const columns: DataTableColumn<Ability>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (a) => (
+        <>
+          <AbilityIcon name={a.name} />
+          <span className="data-cell-name">{a.display_name}</span>
+        </>
+      ),
+      sortKey: (a) => a.display_name.toLowerCase(),
+    },
+  ]
+
   return (
-    <ContentSection
-      title="Abilities"
-      description="The six core ability scores every character carries. Each one drives different rolls, resources, and damage scaling."
-      items={abilities}
-      emptyText="No abilities defined yet."
-    >
-      {abilities?.map((a) => (
-        <article key={a.name} className="content-card">
-          <header className="content-card-header">
-            <h3 className="content-card-title">
-              <AbilityIcon name={a.name} />
-              {a.display_name}
-            </h3>
-            <span className="content-card-id">{a.name.slice(0, 3).toUpperCase()}</span>
-          </header>
-          {a.description && <p className="content-card-body">{a.description}</p>}
-          {a.derived_effects.length > 0 && (
-            <ul className="content-card-rules">
-              {a.derived_effects.map((eff, i) => (
-                <li key={i}>{eff.description}</li>
-              ))}
-            </ul>
-          )}
-        </article>
-      ))}
-    </ContentSection>
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Abilities</h2>
+        <p>
+          The six core ability scores every character carries. Each one drives
+          different rolls, resources, and damage scaling. Click a row for
+          details.
+        </p>
+      </header>
+      <DataTable<Ability>
+        rows={abilities}
+        columns={columns}
+        rowKey={(a) => a.name}
+        searchPlaceholder="Search abilities…"
+        searchKeys={(a) => [a.display_name, a.name, a.category, a.description]}
+        emptyText="No abilities defined yet."
+        defaultSort={{ columnId: 'name', direction: 'asc' }}
+        expandedContent={(a) => (
+          <dl className="data-expansion">
+            <dt>ID</dt>
+            <dd>
+              <code className="data-table-mono">{a.name}</code>
+            </dd>
+            {a.category && (
+              <>
+                <dt>Category</dt>
+                <dd>{a.category}</dd>
+              </>
+            )}
+            {a.description && (
+              <>
+                <dt>Description</dt>
+                <dd>{a.description}</dd>
+              </>
+            )}
+            {a.derived_effects.length > 0 && (
+              <>
+                <dt>Derived Effects</dt>
+                <dd>
+                  <ul className="data-expansion-list">
+                    {a.derived_effects.map((eff, i) => (
+                      <li key={i}>{eff.description}</li>
+                    ))}
+                  </ul>
+                </dd>
+              </>
+            )}
+          </dl>
+        )}
+      />
+    </section>
   )
 }
 
 function AlignmentsSection() {
   const alignments = useAsyncList<Alignment>(() => listAlignments())
+
+  const columns: DataTableColumn<Alignment>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (a) => (
+        <>
+          <AlignmentIcon id={a.id} />
+          <span className="data-cell-name">{a.display_name}</span>
+        </>
+      ),
+      sortKey: (a) => a.sort_order,
+    },
+  ]
+
   return (
-    <ContentSection
-      title="Alignments"
-      description="Ideological axes characters drift along over time. Alignment is set by gameplay actions — moral choices, kills, faction reputations — not chosen at creation."
-      items={alignments}
-      emptyText="No alignments defined yet."
-    >
-      {alignments?.map((a) => (
-        <article key={a.id} className="content-card">
-          <header className="content-card-header">
-            <h3 className="content-card-title">
-              <AlignmentIcon id={a.id} />
-              {a.display_name}
-            </h3>
-            <span className="content-card-id">{a.id}</span>
-          </header>
-          {a.description && <p className="content-card-body">{a.description}</p>}
-          {a.gameplay_rules.length > 0 && (
-            <ul className="content-card-rules">
-              {a.gameplay_rules.map((rule, i) => (
-                <li key={i}>{rule}</li>
-              ))}
-            </ul>
-          )}
-        </article>
-      ))}
-    </ContentSection>
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Alignments</h2>
+        <p>
+          Ideological axes characters drift along over time. Alignment is set by
+          gameplay actions — moral choices, kills, faction reputations — not
+          chosen at creation. Click a row for details.
+        </p>
+      </header>
+      <DataTable<Alignment>
+        rows={alignments}
+        columns={columns}
+        rowKey={(a) => a.id}
+        searchPlaceholder="Search alignments…"
+        searchKeys={(a) => [a.display_name, a.id, a.description]}
+        emptyText="No alignments defined yet."
+        defaultSort={{ columnId: 'name', direction: 'asc' }}
+        expandedContent={(a) => (
+          <dl className="data-expansion">
+            <dt>ID</dt>
+            <dd><code className="data-table-mono">{a.id}</code></dd>
+            <dt>Order</dt>
+            <dd>{a.sort_order}</dd>
+            {a.description && (
+              <>
+                <dt>Description</dt>
+                <dd>{a.description}</dd>
+              </>
+            )}
+            {a.gameplay_rules.length > 0 && (
+              <>
+                <dt>Gameplay Rules</dt>
+                <dd>
+                  <ul className="data-expansion-list">
+                    {a.gameplay_rules.map((rule, i) => (
+                      <li key={i}>{rule}</li>
+                    ))}
+                  </ul>
+                </dd>
+              </>
+            )}
+          </dl>
+        )}
+      />
+    </section>
   )
 }
 
 function FactionsSection() {
   const factions = useAsyncList<Faction>(() => listFactions())
+
+  const columns: DataTableColumn<Faction>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (f) => (
+        <>
+          <FactionIcon id={f.id} />
+          <span className="data-cell-name">{f.display_name}</span>
+        </>
+      ),
+      sortKey: (f) => f.display_name.toLowerCase(),
+    },
+  ]
+
   return (
-    <ContentSection
-      title="Factions"
-      description="In-game factions and reputation. Inter-faction stances live in necro_content.faction_hostility."
-      items={factions}
-      emptyText="No factions defined yet."
-    >
-      {factions?.map((f) => (
-        <article key={f.id} className="content-card">
-          <header className="content-card-header">
-            <h3 className="content-card-title">
-              <FactionIcon id={f.id} />
-              {f.display_name}
-            </h3>
-            <span className="content-card-id">{f.id}</span>
-          </header>
-          {f.description && <p className="content-card-body">{f.description}</p>}
-          <div className="content-card-meta">
-            {f.is_player_faction && <span className="tag">Player faction</span>}
-            <span className="tag-muted">Starts {f.starting_standing}</span>
-          </div>
-        </article>
-      ))}
-    </ContentSection>
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Factions</h2>
+        <p>
+          In-game factions and reputation. Inter-faction stances live in
+          necro_content.faction_hostility. Click a row for details.
+        </p>
+      </header>
+      <DataTable<Faction>
+        rows={factions}
+        columns={columns}
+        rowKey={(f) => f.id}
+        searchPlaceholder="Search factions…"
+        searchKeys={(f) => [
+          f.display_name,
+          f.id,
+          f.description,
+          f.starting_standing,
+        ]}
+        emptyText="No factions defined yet."
+        defaultSort={{ columnId: 'name', direction: 'asc' }}
+        expandedContent={(f) => (
+          <dl className="data-expansion">
+            <dt>ID</dt>
+            <dd><code className="data-table-mono">{f.id}</code></dd>
+            <dt>Player Faction</dt>
+            <dd>{f.is_player_faction ? 'Yes' : 'No'}</dd>
+            <dt>Starting Standing</dt>
+            <dd>{f.starting_standing}</dd>
+            {f.parent_id && (
+              <>
+                <dt>Parent</dt>
+                <dd><code className="data-table-mono">{f.parent_id}</code></dd>
+              </>
+            )}
+            {f.description && (
+              <>
+                <dt>Description</dt>
+                <dd>{f.description}</dd>
+              </>
+            )}
+          </dl>
+        )}
+      />
+    </section>
   )
 }
 
 function ZonesSection() {
   const zones = useAsyncList<Zone>(() => listZones())
+
+  function zoneFlags(z: Zone): string {
+    const flags: string[] = []
+    if (z.is_starting_zone) flags.push('Starting')
+    if (z.is_pvp_zone) flags.push('PvP')
+    if (z.is_sanctuary) flags.push('Sanctuary')
+    return flags.length > 0 ? flags.join(', ') : 'None'
+  }
+
+  const columns: DataTableColumn<Zone>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (z) => <span className="data-cell-name">{z.display_name}</span>,
+      sortKey: (z) => z.display_name.toLowerCase(),
+    },
+  ]
+
   return (
-    <ContentSection
-      title="Zones"
-      description="Zones and sub-zones. Sub-zones live in necro_content.sub_zones."
-      items={zones}
-      emptyText="No zones defined yet."
-    >
-      {zones?.map((z) => (
-        <article key={z.id} className="content-card">
-          <header className="content-card-header">
-            <h3 className="content-card-title">{z.display_name}</h3>
-            <span className="content-card-id">{z.id}</span>
-          </header>
-          {z.description && <p className="content-card-body">{z.description}</p>}
-          <div className="content-card-meta">
-            <span className="tag-muted">
-              Lv {z.min_level}
-              {z.max_level !== z.min_level ? `–${z.max_level}` : ''}
-            </span>
-            {z.controlling_faction_id && (
-              <span className="tag-muted">{z.controlling_faction_id}</span>
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Zones</h2>
+        <p>
+          Zones and sub-zones. Sub-zones live in necro_content.sub_zones. Click
+          a row for details.
+        </p>
+      </header>
+      <DataTable<Zone>
+        rows={zones}
+        columns={columns}
+        rowKey={(z) => z.id}
+        searchPlaceholder="Search zones…"
+        searchKeys={(z) => [
+          z.display_name,
+          z.id,
+          z.description,
+          z.controlling_faction_id ?? '',
+        ]}
+        emptyText="No zones defined yet."
+        defaultSort={{ columnId: 'name', direction: 'asc' }}
+        expandedContent={(z) => (
+          <dl className="data-expansion">
+            <dt>ID</dt>
+            <dd><code className="data-table-mono">{z.id}</code></dd>
+            <dt>Level Range</dt>
+            <dd>
+              {z.max_level !== z.min_level
+                ? `${z.min_level}–${z.max_level}`
+                : `${z.min_level}`}
+            </dd>
+            <dt>Controlling Faction</dt>
+            <dd>
+              {z.controlling_faction_id ? (
+                <code className="data-table-mono">
+                  {z.controlling_faction_id}
+                </code>
+              ) : (
+                '—'
+              )}
+            </dd>
+            <dt>Flags</dt>
+            <dd>{zoneFlags(z)}</dd>
+            {z.description && (
+              <>
+                <dt>Description</dt>
+                <dd>{z.description}</dd>
+              </>
             )}
-            {z.is_starting_zone && <span className="tag">Starting zone</span>}
-            {z.is_pvp_zone && <span className="tag">PvP</span>}
-            {z.is_sanctuary && <span className="tag-muted">Sanctuary</span>}
-          </div>
-        </article>
-      ))}
-    </ContentSection>
+          </dl>
+        )}
+      />
+    </section>
   )
 }
 
 function GuildsSection() {
   const guilds = useAsyncList<PublicGuild>(() => listPublicGuilds())
-  const [query, setQuery] = useState('')
   const { gameId } = useParams<{ gameId: string }>()
 
-  const filtered =
-    guilds?.filter((g) => {
-      if (!query) return true
-      const haystack = `${g.name} ${g.motd} ${g.info} ${g.realm_name ?? ''}`.toLowerCase()
-      return haystack.includes(query.toLowerCase())
-    }) ?? null
+  const dateFormatter = new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'long',
+  })
+
+  const columns: DataTableColumn<PublicGuild>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (g) => g.name,
+      sortKey: (g) => g.name.toLowerCase(),
+    },
+    {
+      id: 'level',
+      header: 'Level',
+      cell: (g) => g.level,
+      align: 'right',
+      sortKey: (g) => g.level,
+    },
+    {
+      id: 'members',
+      header: 'Members',
+      cell: (g) => g.member_count,
+      align: 'right',
+      sortKey: (g) => g.member_count,
+    },
+    {
+      id: 'realm',
+      header: 'Realm',
+      cell: (g) => g.realm_name ?? '—',
+      sortKey: (g) => (g.realm_name ?? '').toLowerCase(),
+    },
+    {
+      id: 'created',
+      header: 'Founded',
+      cell: (g) => {
+        const d = new Date(g.created_at)
+        const tip = isNaN(d.getTime()) ? g.created_at : dateFormatter.format(d)
+        return <span title={tip}>{formatRelativeShort(g.created_at)} ago</span>
+      },
+      sortKey: (g) => new Date(g.created_at).getTime(),
+    },
+  ]
 
   return (
-    <ContentSection
-      title="Guilds"
-      description="Public directory of guilds across all realms — names, banners, levels, and recruitment status."
-      items={filtered}
-      emptyText={query ? `No guilds match "${query}".` : 'No guilds yet.'}
-      headerExtra={
-        <input
-          type="search"
-          className="content-search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search guilds…"
-          aria-label="Search guilds"
-        />
-      }
-    >
-      {filtered?.map((g) => {
-        const inner = (
-          <>
-            <header className="content-card-header">
-              <h3 className="content-card-title">{g.name}</h3>
-              <span className="content-card-id">Lv {g.level}</span>
-            </header>
-            {g.motd && (
-              <p className="content-card-body">
-                <em>“{g.motd}”</em>
-              </p>
-            )}
-            {g.info && <p className="content-card-body">{g.info}</p>}
-            <div className="content-card-meta">
-              {g.realm_name && <span className="tag-muted">{g.realm_name}</span>}
-              <span className="tag-muted">
-                {g.member_count} member{g.member_count === 1 ? '' : 's'}
-              </span>
-            </div>
-          </>
-        )
-        return gameId ? (
-          <Link
-            key={g.guild_id}
-            to={`/g/${gameId}/guilds/${g.guild_id}`}
-            className="content-card content-card-link"
-          >
-            {inner}
-          </Link>
-        ) : (
-          <article key={g.guild_id} className="content-card">
-            {inner}
-          </article>
-        )
-      })}
-    </ContentSection>
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Guilds</h2>
+        <p>Public directory of guilds across all realms.</p>
+      </header>
+      <DataTable<PublicGuild>
+        rows={guilds}
+        columns={columns}
+        rowKey={(g) => g.guild_id}
+        rowHref={(g) => `/g/${gameId ?? 'necro'}/guilds/${g.guild_id}`}
+        rowAriaLabel={(g) => `View ${g.name}`}
+        searchPlaceholder="Search guilds…"
+        searchKeys={(g) => [g.name, g.motd, g.info, g.realm_name ?? '']}
+        emptyText="No guilds yet."
+        defaultSort={{ columnId: 'members', direction: 'desc' }}
+      />
+    </section>
+  )
+}
+
+type RankedCharacter = PublicCharacter & { rank: number }
+
+function LeaderboardSection() {
+  const { gameId } = useParams<{ gameId: string }>()
+  const characters = useAsyncList<PublicCharacter>(() => listPublicCharacters())
+  const realms = useAsyncList<Realm>(() => listRealms())
+  const realmNameById = new Map((realms ?? []).map((r) => [r.id, r.display_name]))
+
+  // Rank is precomputed off the level-desc ordering so the position number
+  // stays attached to the character even if the user re-sorts the table.
+  const ranked: RankedCharacter[] | null =
+    characters == null
+      ? null
+      : [...characters]
+          .sort(
+            (a, b) =>
+              b.level - a.level ||
+              a.character_name.localeCompare(b.character_name),
+          )
+          .map((c, i) => ({ ...c, rank: i + 1 }))
+
+  const columns: DataTableColumn<RankedCharacter>[] = [
+    {
+      id: 'rank',
+      header: 'Rank',
+      cell: (c) => `#${c.rank}`,
+      align: 'right',
+      sortKey: (c) => c.rank,
+    },
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (c) => (
+        <>
+          <RaceIcon id={c.race} />
+          <span className="data-cell-name">{c.character_name}</span>
+        </>
+      ),
+      sortKey: (c) => c.character_name.toLowerCase(),
+    },
+    {
+      id: 'level',
+      header: 'Level',
+      cell: (c) => c.level,
+      align: 'right',
+      sortKey: (c) => c.level,
+    },
+    {
+      id: 'race',
+      header: 'Race',
+      cell: (c) => capitalize(c.race),
+      sortKey: (c) => c.race,
+    },
+    {
+      id: 'realm',
+      header: 'Realm',
+      cell: (c) => realmNameById.get(c.realm_id) ?? '—',
+      sortKey: (c) => (realmNameById.get(c.realm_id) ?? '').toLowerCase(),
+    },
+  ]
+
+  return (
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Leaderboard</h2>
+        <p>Top characters across all realms, ranked by level.</p>
+      </header>
+      <DataTable<RankedCharacter>
+        rows={ranked}
+        columns={columns}
+        rowKey={(c) => c.id}
+        rowHref={(c) => `/g/${gameId ?? 'necro'}/characters/${c.id}`}
+        rowAriaLabel={(c) => `View ${c.character_name}`}
+        searchPlaceholder="Search players…"
+        searchKeys={(c) => [
+          c.character_name,
+          c.race,
+          realmNameById.get(c.realm_id) ?? '',
+        ]}
+        emptyText="No characters yet."
+        defaultSort={{ columnId: 'rank', direction: 'asc' }}
+      />
+    </section>
   )
 }
 
@@ -2356,38 +3062,76 @@ function CharactersSection() {
   const realms = useAsyncList<Realm>(() => listRealms())
   const realmNameById = new Map((realms ?? []).map((r) => [r.id, r.display_name]))
 
+  const dateFormatter = new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'long',
+    timeStyle: 'short',
+  })
+
+  const columns: DataTableColumn<PublicCharacter>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (c) => (
+        <>
+          <RaceIcon id={c.race} />
+          <span className="data-cell-name">{c.character_name}</span>
+        </>
+      ),
+      sortKey: (c) => c.character_name.toLowerCase(),
+    },
+    {
+      id: 'level',
+      header: 'Level',
+      cell: (c) => c.level,
+      align: 'right',
+      sortKey: (c) => c.level,
+    },
+    {
+      id: 'race',
+      header: 'Race',
+      cell: (c) => capitalize(c.race),
+      sortKey: (c) => c.race,
+    },
+    {
+      id: 'realm',
+      header: 'Realm',
+      cell: (c) => realmNameById.get(c.realm_id) ?? '—',
+      sortKey: (c) => (realmNameById.get(c.realm_id) ?? '').toLowerCase(),
+    },
+    {
+      id: 'created',
+      header: 'Created',
+      cell: (c) => {
+        const d = new Date(c.created_at)
+        const tip = isNaN(d.getTime()) ? c.created_at : dateFormatter.format(d)
+        return <span title={tip}>{formatRelativeShort(c.created_at)} ago</span>
+      },
+      sortKey: (c) => new Date(c.created_at).getTime(),
+    },
+  ]
+
   return (
-    <ContentSection
-      title="Characters"
-      description="Player characters across all realms, sorted by level."
-      items={characters}
-      emptyText="No characters yet."
-    >
-      {characters?.map((c) => (
-        <Link
-          key={c.id}
-          to={`/g/${gameId ?? 'necro'}/characters/${c.id}`}
-          className="content-card content-card-link"
-        >
-          <header className="content-card-header">
-            <h3 className="content-card-title">
-              <RaceIcon id={c.race} />
-              {c.character_name}
-            </h3>
-            <span className="content-card-id">Lv {c.level}</span>
-          </header>
-          <div className="content-card-meta">
-            <span className="tag-muted">{capitalize(c.race)}</span>
-            <span className="tag-muted">
-              {formatRelativeShort(c.created_at)} ago
-            </span>
-            <span className="tag-muted">
-              {realmNameById.get(c.realm_id) ?? '—'}
-            </span>
-          </div>
-        </Link>
-      ))}
-    </ContentSection>
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Characters</h2>
+        <p>Player characters across all realms.</p>
+      </header>
+      <DataTable<PublicCharacter>
+        rows={characters}
+        columns={columns}
+        rowKey={(c) => c.id}
+        rowHref={(c) => `/g/${gameId ?? 'necro'}/characters/${c.id}`}
+        rowAriaLabel={(c) => `View ${c.character_name}`}
+        searchPlaceholder="Search characters…"
+        searchKeys={(c) => [
+          c.character_name,
+          c.race,
+          realmNameById.get(c.realm_id) ?? '',
+        ]}
+        emptyText="No characters yet."
+        defaultSort={{ columnId: 'created', direction: 'desc' }}
+      />
+    </section>
   )
 }
 
@@ -2401,41 +3145,73 @@ function RealmsSection() {
 
   const statsById = new Map((stats ?? []).map((s) => [s.realm_id, s]))
 
+  const columns: DataTableColumn<Realm>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (r) => <span className="data-cell-name">{r.display_name}</span>,
+      sortKey: (r) => r.display_name.toLowerCase(),
+    },
+  ]
+
   return (
-    <ContentSection
-      title="Realms"
-      description="Logical shards players choose between. Characters are realm-bound — name uniqueness, guilds, and mail all scope to a realm."
-      items={realms}
-      emptyText="No realms defined yet."
-    >
-      {realms?.map((r) => {
-        const s = statsById.get(r.id)
-        const total = s?.total_characters ?? 0
-        const online = s?.online_characters ?? 0
-        return (
-          <article key={r.id} className="content-card">
-            <header className="content-card-header">
-              <h3 className="content-card-title">{r.display_name}</h3>
-              <span className="content-card-id">{r.short_name}</span>
-            </header>
-            <p className="content-card-body">
-              {r.region} · {r.locale} · {r.timezone}
-            </p>
-            <div className="content-card-meta">
-              <span className={r.is_online ? 'tag' : 'tag-muted'}>
-                {r.is_online ? 'Online' : 'Offline'}
-              </span>
-              <span className="tag-muted">{r.realm_type}</span>
-              <span className="tag-muted">{r.population}</span>
-              {r.connected_to_id && <span className="tag-muted">Connected</span>}
-              <span className="tag-muted">
-                {total.toLocaleString()} character{total === 1 ? '' : 's'}
-              </span>
-              <span className="tag-muted">{online.toLocaleString()} online</span>
-            </div>
-          </article>
-        )
-      })}
-    </ContentSection>
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Realms</h2>
+        <p>
+          Logical shards players choose between. Characters are realm-bound —
+          name uniqueness, guilds, and mail all scope to a realm. Click a row
+          for details.
+        </p>
+      </header>
+      <DataTable<Realm>
+        rows={realms}
+        columns={columns}
+        rowKey={(r) => r.id}
+        searchPlaceholder="Search realms…"
+        searchKeys={(r) => [
+          r.display_name,
+          r.short_name,
+          r.region,
+          r.realm_type,
+          r.locale,
+          r.timezone,
+          r.population,
+        ]}
+        emptyText="No realms defined yet."
+        defaultSort={{ columnId: 'name', direction: 'asc' }}
+        expandedContent={(r) => {
+          const s = statsById.get(r.id)
+          return (
+            <dl className="data-expansion">
+              <dt>Short Name</dt>
+              <dd><code className="data-table-mono">{r.short_name}</code></dd>
+              <dt>Region</dt>
+              <dd>{r.region}</dd>
+              <dt>Type</dt>
+              <dd>{r.realm_type}</dd>
+              <dt>Status</dt>
+              <dd>{r.is_online ? 'Online' : 'Offline'}</dd>
+              <dt>Population</dt>
+              <dd>{r.population}</dd>
+              <dt>Total Characters</dt>
+              <dd>{(s?.total_characters ?? 0).toLocaleString()}</dd>
+              <dt>Online Characters</dt>
+              <dd>{(s?.online_characters ?? 0).toLocaleString()}</dd>
+              <dt>Locale</dt>
+              <dd>{r.locale}</dd>
+              <dt>Timezone</dt>
+              <dd>{r.timezone}</dd>
+              {r.connected_to_id && (
+                <>
+                  <dt>Connected To</dt>
+                  <dd><code className="data-table-mono">{r.connected_to_id}</code></dd>
+                </>
+              )}
+            </dl>
+          )
+        }}
+      />
+    </section>
   )
 }

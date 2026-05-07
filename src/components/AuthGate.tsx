@@ -28,7 +28,7 @@ const STAGE_ALLOWED_PREFIXES: Record<Exclude<Stage, 'loading'>, string[]> = {
   login: ['/u/', '/g/'],
   enroll: [],
   challenge: [],
-  dashboard: ['/u/', '/g/'],
+  dashboard: ['/u/', '/g/', '/dev/'],
   recovery: [],
 }
 

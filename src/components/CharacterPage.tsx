@@ -591,7 +591,9 @@ function EquipmentCard({ item }: { item: PublicCharacterEquipmentSlot }) {
         {item.item_rarity && (
           <span className="tag-muted">{capitalize(item.item_rarity)}</span>
         )}
-        {item.item_type && <span className="tag-muted">{item.item_type}</span>}
+        {item.item_subclass && (
+          <span className="tag-muted">{item.item_subclass}</span>
+        )}
       </div>
     </article>
   )
