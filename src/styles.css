@@ -406,6 +406,55 @@ body {
   }
 }
 
+/* Forked step — physical and magical paths shown side-by-side inside the
+   step card. Each column has its own field grid below the shared blurb. */
+.flowchart-fork {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 4px;
+}
+
+.flowchart-fork-col {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  min-width: 0;
+}
+
+.flowchart-fork-physical {
+  border-top: 3px solid #d65a5a;
+}
+
+.flowchart-fork-magical {
+  border-top: 3px solid #5a8cd6;
+}
+
+.flowchart-fork-col-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+/* "Skipped" placeholder in the inactive side of a forked step (e.g. dodge
+   on the magical path). Tinted dim and italic so it reads as inert. */
+.flowchart-skipped {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-style: italic;
+  padding: 6px 0;
+}
+
+@media (max-width: 720px) {
+  .flowchart-fork {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Top-level horizontal tabs for the game page (Game Info / Characters /
    Guilds / Leaderboards / Patch Notes). Sit just below the game title,
    underline the active tab in red. */
@@ -2844,6 +2893,18 @@ a.content-card.content-card-link:hover {
   opacity: 0.85;
 }
 
+/* BLOCK = partial mitigation (still does damage but reduced). Different
+   tone from miss/dodge/parry which are full evasions. */
+.dmg-step-block {
+  border-left-color: #b06a3a;
+}
+
+/* HIT = the attack landed cleanly. Subtle green so it reads as positive
+   without competing with the FINAL step's stronger green tint. */
+.dmg-step-hit {
+  border-left-color: #4a8c4a;
+}
+
 .dmg-step-final {
   border-left-color: #4a8c4a;
   background: var(--bg-2);
@@ -2871,6 +2932,16 @@ a.content-card.content-card-link:hover {
 .dmg-step-miss .dmg-step-tag {
   background: #777;
   color: var(--bg-0);
+}
+
+.dmg-step-block .dmg-step-tag {
+  background: #b06a3a;
+  color: #1a1a1a;
+}
+
+.dmg-step-hit .dmg-step-tag {
+  background: #4a8c4a;
+  color: #1a1a1a;
 }
 
 .dmg-step-inputs {
@@ -2970,7 +3041,8 @@ a.content-card.content-card-link:hover {
 }
 
 .dmg-multi-results {
-  margin-top: 10px;
+  margin-top: 0;
+  margin-bottom: 14px;
   padding: 12px 16px;
   background: var(--bg-2);
   border: 1px solid var(--border);
@@ -2978,10 +3050,111 @@ a.content-card.content-card-link:hover {
   border-radius: 6px;
 }
 
+.dmg-multi-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
 .dmg-multi-title {
   font-size: 12px;
   color: var(--text-dim);
-  margin-bottom: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Small inline spinner shown next to the multi-roll title while the auto-
+   rerun is debouncing or computing. Signals histogram-is-stale so the user
+   knows the numbers will update once the rolls land. */
+.dmg-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent, #c8a04a);
+  border-radius: 50%;
+  animation: dmg-spinner-spin 0.8s linear infinite;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+@keyframes dmg-spinner-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.dmg-multi-pending {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* Outcome breakdown row — number of misses / dodges / parries / blocks /
+   hits / crits across the multi-roll batch. Coloured pills so the eye
+   can map them to the pipeline step labels. */
+.dmg-outcomes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dmg-outcome {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  font-size: 12px;
+}
+
+.dmg-outcome strong {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.dmg-outcome-label {
+  color: var(--text-dim);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+.dmg-outcome-pct {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.dmg-outcome-miss {
+  border-left-color: #777;
+}
+
+.dmg-outcome-block {
+  border-left-color: #b06a3a;
+}
+
+.dmg-outcome-hit {
+  border-left-color: #4a8c4a;
+}
+
+.dmg-outcome-crit {
+  border-left-color: #c8a04a;
+}
+
+.dmg-outcome-zero {
+  opacity: 0.45;
 }
 
 .dmg-multi-stats {
@@ -3122,5 +3295,148 @@ a.content-card.content-card-link:hover {
   font-size: 11px;
   color: var(--text-dim);
   font-style: italic;
+}
+
+/* Editable stat inputs in the picker cards. The input replaces the static
+   value; override-state styling makes it obvious which numbers the user has
+   tweaked vs. which still come from the character. The reset (×) button
+   only renders when an override is active. */
+/* Small caps section header inside a picker card — separates the ability
+   scores block from the calc-stats block. */
+.dmg-card-section-label {
+  margin-top: 10px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.dmg-card-section-label:first-of-type {
+  border-top: none;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.dmg-stat-input {
+  width: 76px;
+  padding: 3px 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  font-family: inherit;
+  -moz-appearance: textfield;
+}
+
+.dmg-stat-input::-webkit-outer-spin-button,
+.dmg-stat-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.dmg-stat-input-override {
+  border-color: var(--accent, #c8a04a);
+  color: var(--accent, #c8a04a);
+  font-weight: 600;
+}
+
+.dmg-stat-suffix {
+  margin-left: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.dmg-stat-reset {
+  margin-left: 6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.dmg-stat-reset:hover {
+  background: var(--bg-0);
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+/* Proficiency block — only on the attacker card. Shows which skill applies
+   (or "no weapon required") and a slider + number input that overrides the
+   character's actual level for the damage roll. */
+.dmg-prof {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dmg-prof-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.dmg-prof-name {
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text);
+  font-style: italic;
+}
+
+.dmg-prof-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dmg-prof-slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent, #c8a04a);
+}
+
+.dmg-reset-all {
+  margin-top: 8px;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  font-family: inherit;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.dmg-reset-all:hover {
+  background: var(--bg-2);
+  color: var(--text);
 }
 
