@@ -3069,3 +3069,58 @@ a.content-card.content-card-link:hover {
   text-align: right;
 }
 
+.dmg-multi-hist-wrap {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+
+.dmg-multi-hist {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 120px;
+  margin-top: 8px;
+  padding: 0 2px;
+  background: var(--bg-1);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.dmg-multi-hist-bar {
+  flex: 1 1 0;
+  min-width: 1px;
+  min-height: 1px;
+  background: #4a7c8c;
+  transition: height 200ms ease;
+  cursor: help;
+}
+
+.dmg-multi-hist-bar:hover {
+  background: #5e95a6;
+}
+
+.dmg-multi-hist-bar-median {
+  background: #c8a04a;
+}
+
+.dmg-multi-hist-bar-median:hover {
+  background: #d6b25c;
+}
+
+.dmg-multi-hist-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.dmg-multi-caption {
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+

@@ -34,15 +34,59 @@ type SimpleCharacter = {
 const MITIGATION_K = 100
 
 // Cap that level / MAX_SKILL_LEVEL is divided by to produce the damage-roll
-// floor. Matches max_level on the seeded weapon proficiencies (migration 0012).
+// peak position. Matches max_level on the seeded weapon proficiencies
+// (migration 0012).
 const MAX_SKILL_LEVEL = 99
 
-// Floor used when no weapon proficiency applies — spells, generic abilities.
-// 0 = full uniform 0..max with min 1 (untrained casters).
-// 0.5 = roll between 50% and 100% of max ("reliable but variable").
-// 1.0 = always max (deterministic).
+// Peak position used when no weapon proficiency applies — spells, generic
+// abilities. Range [0, 1]: the peak of the triangle distribution sits at
+// `value * SPELL_PROFICIENCY_PEAK` along the [0, value] roll range.
+//   0   = peak at 0 (untrained — low damage common, max rare)
+//   0.5 = peak in middle (symmetric bell)
+//   1.0 = peak at max (deterministic-feeling, max common, low rare)
 // Single knob so the design can shift without code changes.
-const SPELL_PROFICIENCY_FLOOR = 0
+const SPELL_PROFICIENCY_PEAK = 0
+
+// Inverse-CDF sample from a triangle distribution on [a, b] with mode c.
+// Returns NaN-safe degenerate value when a === b. Used by the damage roll.
+function triangleSample(a: number, b: number, c: number): number {
+  if (b <= a) return a
+  const u = Math.random()
+  const fc = (c - a) / (b - a)
+  if (u < fc) return a + Math.sqrt(u * (b - a) * (c - a))
+  return b - Math.sqrt((1 - u) * (b - a) * (b - c))
+}
+
+// Persistence — saved choices survive tab switches and page reloads.
+// Bumped key suffix invalidates old shapes if the schema ever changes.
+const SAVED_KEY = 'necro:damage-calculator:v1'
+
+type SavedState = {
+  attackerId?: string
+  defenderId?: string
+  spellId?: string
+  forceCrit?: boolean
+  forceHit?: boolean
+  powerCoefficient?: number
+  nRolls?: number
+}
+
+function loadSaved(): SavedState {
+  try {
+    const raw = localStorage.getItem(SAVED_KEY)
+    return raw ? (JSON.parse(raw) as SavedState) : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveSaved(s: SavedState) {
+  try {
+    localStorage.setItem(SAVED_KEY, JSON.stringify(s))
+  } catch {
+    // quota or disabled storage — best-effort persistence, ignore.
+  }
+}
 
 function statValue(stats: PublicCharacterCalculatedStat[], id: string): number {
   return stats.find((s) => s.id === id)?.value ?? 0
@@ -94,19 +138,37 @@ export function DamageCalculator() {
   const [spells, setSpells] = useState<Spell[] | null>(null)
   const [skillsCatalog, setSkillsCatalog] = useState<Skill[] | null>(null)
 
-  const [attackerId, setAttackerId] = useState<string>('')
-  const [defenderId, setDefenderId] = useState<string>('')
-  const [spellId, setSpellId] = useState<string>('')
+  // Hydrate once from localStorage on first render so picks survive tab
+  // switches and reloads. Lazy initializers keep the read off the render path.
+  const [attackerId, setAttackerId] = useState<string>(() => loadSaved().attackerId ?? '')
+  const [defenderId, setDefenderId] = useState<string>(() => loadSaved().defenderId ?? '')
+  const [spellId, setSpellId] = useState<string>(() => loadSaved().spellId ?? '')
 
   const [attacker, setAttacker] = useState<SimpleCharacter | null>(null)
   const [defender, setDefender] = useState<SimpleCharacter | null>(null)
 
-  const [forceCrit, setForceCrit] = useState(false)
-  const [forceHit, setForceHit] = useState(true) // assume hit by default
-  const [powerCoefficient, setPowerCoefficient] = useState(1.0)
+  const [forceCrit, setForceCrit] = useState(() => loadSaved().forceCrit ?? false)
+  const [forceHit, setForceHit] = useState(() => loadSaved().forceHit ?? true)
+  const [powerCoefficient, setPowerCoefficient] = useState(
+    () => loadSaved().powerCoefficient ?? 1.0,
+  )
+  const [nRolls, setNRolls] = useState(() => loadSaved().nRolls ?? 1000)
   // Bumping rollSeed forces buildPipeline's useMemo to re-run, which
   // re-rolls the damage sample. Reroll button writes to it.
   const [rollSeed, setRollSeed] = useState(0)
+
+  // Persist any choice change so a tab switch or reload restores them.
+  useEffect(() => {
+    saveSaved({
+      attackerId,
+      defenderId,
+      spellId,
+      forceCrit,
+      forceHit,
+      powerCoefficient,
+      nRolls,
+    })
+  }, [attackerId, defenderId, spellId, forceCrit, forceHit, powerCoefficient, nRolls])
 
   // Boot: fetch the option lists for the three pickers + the skills
   // catalog (needed to map action.required_weapon_types[0] → proficiency).
@@ -244,6 +306,8 @@ export function DamageCalculator() {
           powerCoefficient={powerCoefficient}
           rollSeed={rollSeed}
           onReroll={() => setRollSeed((s) => s + 1)}
+          nRolls={nRolls}
+          setNRolls={setNRolls}
         />
       ) : (
         <div className="dmg-placeholder">
@@ -374,6 +438,13 @@ type MultiRollResult = {
   mode: number
   modeCount: number
   top10: { value: number; count: number }[]
+  // Bins for the distribution histogram. One bin per integer value when the
+  // range is small; aggregated bins (covering multiple integers each) when
+  // the range gets wide enough that per-integer bars would be sub-pixel.
+  histogram: {
+    bins: { start: number; end: number; count: number }[]
+    binSize: number
+  }
 }
 
 type Step = {
@@ -534,38 +605,42 @@ function buildPipeline(
     })
   }
 
-  // 6. Damage roll — proficiency-driven curve. Heals skip this entirely;
-  //    they stay deterministic at full computed value.
+  // 6. Damage roll — proficiency-driven triangle distribution on [0, value]
+  //    with the peak (mode) shifting from 0 (untrained) to value (mastered)
+  //    as weapon proficiency climbs. Heals skip this entirely — they stay
+  //    deterministic at full computed value.
   let range: { min: number; mean: number; max: number } | null = null
   if (!isHeal && value > 0) {
     const prof = proficiencyLevelFor(attacker, spell, skillsCatalog)
-    const floor =
+    const peakFraction =
       prof !== null
         ? Math.max(0, Math.min(1, prof.level / MAX_SKILL_LEVEL))
-        : SPELL_PROFICIENCY_FLOOR
-    const floorSource =
+        : SPELL_PROFICIENCY_PEAK
+    const peakSource =
       prof !== null
         ? `${prof.skillName} lv ${prof.level} / ${MAX_SKILL_LEVEL}`
-        : `no weapon proficiency · default ${SPELL_PROFICIENCY_FLOOR}`
-    const r = Math.random()
-    const rollMult = floor + (1 - floor) * r
-    const sample = Math.max(1, Math.ceil(value * rollMult))
-    const min = Math.max(1, Math.ceil(value * floor))
-    const max = Math.max(1, Math.ceil(value))
-    const mean = Math.max(1, Math.ceil(value * (floor + 1) / 2))
+        : `no weapon proficiency · default ${SPELL_PROFICIENCY_PEAK}`
+    const a = 0
+    const b = value
+    const c = b * peakFraction
+    const x = triangleSample(a, b, c)
+    const sample = Math.max(1, Math.ceil(x))
+    const min = 1
+    const max = Math.max(1, Math.ceil(b))
+    // Mean of TRI(a, b, c) is (a + b + c) / 3.
+    const mean = Math.max(1, Math.ceil((a + b + c) / 3))
     range = { min, mean, max }
     steps.push({
       title: '6. Damage roll',
       inputs: (
         <>
-          floor = {fmt(floor, 2)} ({floorSource}) · roll ={' '}
-          {fmt(rollMult, 3)}
+          peak = {fmt(peakFraction, 2)} × max ({peakSource}) · sampled x ={' '}
+          {fmt(x, 2)}
         </>
       ),
       formula: (
         <>
-          max(1, ceil({fmt(value)} × ({fmt(floor, 2)} + (1 − {fmt(floor, 2)})
-          × rand))) = {sample}
+          max(1, ceil(triangle(0, {fmt(b)}, {fmt(c, 2)}))) = {sample}
         </>
       ),
       output: sample,
@@ -605,6 +680,8 @@ function Pipeline({
   powerCoefficient,
   rollSeed,
   onReroll,
+  nRolls,
+  setNRolls,
 }: {
   attacker: SimpleCharacter
   defender: SimpleCharacter
@@ -615,6 +692,8 @@ function Pipeline({
   powerCoefficient: number
   rollSeed: number
   onReroll: () => void
+  nRolls: number
+  setNRolls: (n: number) => void
 }) {
   // Recompute when any input changes — including rollSeed, which the Reroll
   // button bumps to re-randomize the damage roll sample without touching the
@@ -632,7 +711,7 @@ function Pipeline({
 
   // Multi-roll: simulate the full pipeline N times and aggregate the
   // final values. Useful for sanity-checking the curve in aggregate.
-  const [nRolls, setNRolls] = useState(1000)
+  // nRolls is owned by the parent so it persists across tab switches.
   const [multi, setMulti] = useState<MultiRollResult | null>(null)
 
   function runMultiRoll() {
@@ -662,13 +741,29 @@ function Pipeline({
     const median =
       count % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
 
-    // Top 10 by frequency. Ties broken by larger value first so the user
-    // sees the more impressive number when counts are equal.
+    // Top 10 by frequency. Tiebreak with smaller value first so we don't
+    // artificially elevate the maximum to rank-1 when counts are tied or
+    // near-tied — the histogram below carries the burden of showing that
+    // the underlying distribution is roughly uniform.
     const ranked = Array.from(freq.entries())
       .map(([value, c]) => ({ value, count: c }))
-      .sort((a, b) => b.count - a.count || b.value - a.value)
+      .sort((a, b) => b.count - a.count || a.value - b.value)
     const top10 = ranked.slice(0, 10)
     const mode = ranked[0]
+
+    // Histogram. One bar per integer when the range is small; bin into
+    // ≤60 columns when the range gets too wide for per-integer bars.
+    const range = max - min + 1
+    const binSize = range > 60 ? Math.ceil(range / 60) : 1
+    const binCount = Math.ceil(range / binSize)
+    const bins: { start: number; end: number; count: number }[] = []
+    for (let i = 0; i < binCount; i++) {
+      bins.push({ start: min + i * binSize, end: min + (i + 1) * binSize - 1, count: 0 })
+    }
+    for (const [value, c] of freq) {
+      const idx = Math.floor((value - min) / binSize)
+      bins[idx].count += c
+    }
 
     setMulti({
       count,
@@ -679,6 +774,7 @@ function Pipeline({
       mode: mode.value,
       modeCount: mode.count,
       top10,
+      histogram: { bins, binSize },
     })
   }
 
@@ -804,8 +900,51 @@ function Pipeline({
               })}
             </ol>
           </div>
+          <Histogram multi={multi} />
+          <div className="dmg-multi-caption">
+            For uniform distributions, all values appear ~equally; minor
+            differences are sampling variance.
+          </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function Histogram({ multi }: { multi: MultiRollResult }) {
+  const { bins, binSize } = multi.histogram
+  const maxCount = bins.reduce((m, b) => Math.max(m, b.count), 1)
+  const medianBinIdx = bins.findIndex(
+    (b) => multi.median >= b.start && multi.median <= b.end,
+  )
+
+  return (
+    <div className="dmg-multi-hist-wrap">
+      <div className="dmg-multi-top-label">Distribution</div>
+      <div className="dmg-multi-hist" role="img" aria-label="Roll distribution histogram">
+        {bins.map((bin, i) => {
+          const pct = (bin.count / multi.count) * 100
+          const label =
+            binSize === 1
+              ? `${bin.start}: ${bin.count.toLocaleString()} (${pct.toFixed(1)}%)`
+              : `${bin.start}–${bin.end}: ${bin.count.toLocaleString()} (${pct.toFixed(1)}%)`
+          return (
+            <span
+              key={i}
+              className={`dmg-multi-hist-bar${
+                i === medianBinIdx ? ' dmg-multi-hist-bar-median' : ''
+              }`}
+              title={label}
+              style={{ height: `${(bin.count / maxCount) * 100}%` }}
+            />
+          )
+        })}
+      </div>
+      <div className="dmg-multi-hist-axis">
+        <span>{multi.min}</span>
+        <span>{Math.round((multi.min + multi.max) / 2)}</span>
+        <span>{multi.max}</span>
+      </div>
     </div>
   )
 }
