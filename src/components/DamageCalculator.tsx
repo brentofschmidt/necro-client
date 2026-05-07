@@ -15,6 +15,7 @@ import {
   Skill,
   Spell,
 } from '../lib/necroContent'
+import { DamageConstantsLegend } from './DamageFlowchart'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DamageCalculator — a dev/debug page that walks through the math behind a
@@ -497,6 +498,8 @@ export function DamageCalculator() {
         </p>
       </header>
 
+      <DamageConstantsLegend />
+
       <div className="dmg-pickers">
         <PickerCard title="Attacker" tone="attacker">
           <CharacterPicker
@@ -774,6 +777,7 @@ function EditableCharacterCard({
     ['Spell Crit (%)', 'spell_crit'],
     ['Crit Damage (%)', 'crit_damage'],
     ['Hit (%)', 'hit_chance'],
+    ['Spell Hit (%)', 'spell_hit'],
   ]
   const defenceFields: [string, string][] = [
     ['Armor', 'armor'],
@@ -1196,7 +1200,7 @@ function buildPipelineRollFirst(
   // its band's [lo, hi) range and whether the roll fell inside it.
   const resolution = resolveAttack({
     isMagic,
-    hitChanceBonus: effStat(aStats, 'hit_chance', opts.attackerOv, attacker.abilities, opts.attackerAbilityOv),
+    hitChanceBonus: effStat(aStats, isMagic ? 'spell_hit' : 'hit_chance', opts.attackerOv, attacker.abilities, opts.attackerAbilityOv),
     defenderDodge: effStat(dStats, 'dodge_chance', opts.defenderOv, defender.abilities, opts.defenderAbilityOv),
     defenderParry: effStat(dStats, 'parry_chance', opts.defenderOv, defender.abilities, opts.defenderAbilityOv),
     defenderBlock: effStat(dStats, 'block_chance', opts.defenderOv, defender.abilities, opts.defenderAbilityOv),
@@ -1412,7 +1416,7 @@ function buildPipelineRollLast(
   // share the same roll value (single-roll attack table).
   const resolution = resolveAttack({
     isMagic,
-    hitChanceBonus: effStat(aStats, 'hit_chance', opts.attackerOv, attacker.abilities, opts.attackerAbilityOv),
+    hitChanceBonus: effStat(aStats, isMagic ? 'spell_hit' : 'hit_chance', opts.attackerOv, attacker.abilities, opts.attackerAbilityOv),
     defenderDodge: effStat(dStats, 'dodge_chance', opts.defenderOv, defender.abilities, opts.defenderAbilityOv),
     defenderParry: effStat(dStats, 'parry_chance', opts.defenderOv, defender.abilities, opts.defenderAbilityOv),
     defenderBlock: effStat(dStats, 'block_chance', opts.defenderOv, defender.abilities, opts.defenderAbilityOv),

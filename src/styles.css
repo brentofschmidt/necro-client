@@ -406,6 +406,79 @@ body {
   }
 }
 
+/* Tuning constants reference panel — shown at the top of the damage
+   flowchart and the calculator so the named knobs (MITIGATION_K,
+   BLOCK_MITIGATION, etc.) are visible alongside the math that uses them. */
+.dmg-constants {
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin: 0 0 18px;
+}
+
+.dmg-constants-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+.dmg-constants-list {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.dmg-constants-row {
+  display: grid;
+  grid-template-columns: minmax(220px, max-content) 1fr;
+  gap: 16px;
+  align-items: baseline;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.dmg-constants-row dt {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dmg-constants-row dt code {
+  background: var(--bg-2);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text);
+}
+
+.dmg-constants-value {
+  font-family: 'Consolas', 'Menlo', monospace;
+  font-size: 12px;
+  color: var(--accent, #c8a04a);
+  font-weight: 600;
+}
+
+.dmg-constants-row dd {
+  margin: 0;
+  color: var(--text-dim);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .dmg-constants-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}
+
 /* Forked step — physical and magical paths shown side-by-side inside the
    step card. Each column has its own field grid below the shared blurb. */
 .flowchart-fork {
