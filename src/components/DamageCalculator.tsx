@@ -269,13 +269,20 @@ function statContributionsFromAbilities(a: {
     haste: f(a.dexterity / 4),
     attack_speed: f(a.dexterity / 4),
     movement_speed: f(a.dexterity / 5),
-    armor: a.constitution,
+    // Armor is equipment-only as of migration 0060 — no ability contribution.
+    armor: 0,
     dodge_chance: dexBase,
-    parry_chance: strBase,
+    // Parry: timing + muscle (STR + DEX) — migration 0060.
+    parry_chance: strBase + dexBase,
     block_chance: conBase, // shield-gated server-side; ignored here
     magic_resist: a.wisdom,
-    hit_chance: dexBase + wisBase,
-    spell_hit: intBase,
+    // Drivers updated in migration 0059 + 0060:
+    //   hit_chance = brawn + agility
+    //   spell_hit  = focus + attunement + force-of-will
+    // Keep these in sync with the SQL CASE arms in
+    // get_public_character_calculated_stats.
+    hit_chance: dexBase + strBase,
+    spell_hit: intBase + wisBase + chaBase,
     expertise: chaBase,
     mana_regen: f(a.wisdom / 4),
     health_regen: f(a.constitution / 5),
