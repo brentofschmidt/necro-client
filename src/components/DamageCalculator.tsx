@@ -1,9 +1,12 @@
 import { ReactNode, useEffect, useMemo, useState } from 'react'
 import {
+  Action,
   getPublicCharacter,
   getPublicCharacterAbilityScores,
   getPublicCharacterCalculatedStats,
+  getPublicCharacterEquipment,
   getPublicCharacterSkills,
+  listActions,
   listPublicCharacters,
   listSkills,
   listSpells,
@@ -11,9 +14,9 @@ import {
   PublicCharacterAbilityScore,
   PublicCharacterCalculatedStat,
   PublicCharacterDetail,
+  PublicCharacterEquipmentSlot,
   PublicCharacterSkill,
   Skill,
-  Spell,
 } from '../lib/necroContent'
 import { DamageConstantsLegend } from './DamageFlowchart'
 
@@ -32,6 +35,10 @@ type SimpleCharacter = {
   // Effective ability scores (base + equipment + aura), keyed by ability id
   // (e.g. 'strength', 'dexterity'). Editable in the calculator.
   abilities: PublicCharacterAbilityScore[]
+  // Equipped items keyed by slot. Weapon attacks (actions with a
+  // required_weapon_types gate) pull base damage from whichever equipped
+  // item matches the gate.
+  equipment: PublicCharacterEquipmentSlot[]
 }
 
 // Mitigation constant. Higher K means armor/resist matter less per point.
@@ -345,14 +352,28 @@ function fmt(n: number, digits = 1): string {
 // damage roll curve in buildPipeline; abilities feed the formula deltas
 // when a user overrides an ability score.
 async function loadCharacter(id: string): Promise<SimpleCharacter | null> {
-  const [detail, stats, skills, abilities] = await Promise.all([
+  const [detail, stats, skills, abilities, equipment] = await Promise.all([
     getPublicCharacter(id),
     getPublicCharacterCalculatedStats(id),
     getPublicCharacterSkills(id),
     getPublicCharacterAbilityScores(id),
+    getPublicCharacterEquipment(id),
   ])
   if (!detail) return null
-  return { detail, stats, skills, abilities }
+  return { detail, stats, skills, abilities, equipment }
+}
+
+// Resolves the FLAT base damage for an ability. Per migration 0064 every
+// damaging ability is now percentage-of-power scaled (base damage flows
+// from `power_coefficient × power_stat` in the pipeline's power-scaling
+// step), so this just returns the ability's intrinsic flat baseline (0
+// for the seeded percentage-scaled abilities; non-zero only if a future
+// design wants a hybrid flat+percent model).
+//
+// Equipment is no longer consulted — weapons contribute via stat bonuses
+// (str/agi/int) which feed AP/SP, not via a damage range.
+function resolveBaseDamage(ability: Action): { base: number } {
+  return { base: ability.damage }
 }
 
 // Resolves the attacker's weapon proficiency level for the action being used.
@@ -362,7 +383,7 @@ async function loadCharacter(id: string): Promise<SimpleCharacter | null> {
 // abilities) — the caller falls back to SPELL_PROFICIENCY_FLOOR in that case.
 function proficiencyLevelFor(
   attacker: SimpleCharacter,
-  spell: Spell,
+  spell: Action,
   skillsCatalog: Skill[] | null,
 ): { level: number; skillName: string } | null {
   const weaponType = spell.required_weapon_types?.[0]
@@ -380,7 +401,11 @@ function proficiencyLevelFor(
 
 export function DamageCalculator() {
   const [characters, setCharacters] = useState<PublicCharacter[] | null>(null)
-  const [spells, setSpells] = useState<Spell[] | null>(null)
+  // Spells + actions merged into a single picker list so the calculator
+  // can walk both physical weapon attacks and magical spells through the
+  // same pipeline. Each entry is just an Action (Spell extends Action with
+  // splash fields the calculator doesn't use yet).
+  const [spells, setSpells] = useState<Action[] | null>(null)
   const [skillsCatalog, setSkillsCatalog] = useState<Skill[] | null>(null)
 
   // Hydrate once from localStorage on first render so picks survive tab
@@ -416,6 +441,7 @@ export function DamageCalculator() {
   const [attackerAbilityOv, setAttackerAbilityOv] = useState<StatOverrides>({})
   const [defenderAbilityOv, setDefenderAbilityOv] = useState<StatOverrides>({})
   const [spellDamageOv, setSpellDamageOv] = useState<number | undefined>()
+  const [spellPowerCoefOv, setSpellPowerCoefOv] = useState<number | undefined>()
   const [proficiencyOv, setProficiencyOv] = useState<number | undefined>()
   useEffect(() => {
     setAttackerOv({})
@@ -427,6 +453,7 @@ export function DamageCalculator() {
   }, [defenderId])
   useEffect(() => {
     setSpellDamageOv(undefined)
+    setSpellPowerCoefOv(undefined)
     setProficiencyOv(undefined)
   }, [spellId, attackerId])
 
@@ -450,9 +477,16 @@ export function DamageCalculator() {
 
   // Boot: fetch the option lists for the three pickers + the skills
   // catalog (needed to map action.required_weapon_types[0] → proficiency).
+  // Spells and actions are merged into a single ability list — both share
+  // the Action shape (damage + damage_school + …) post-migration 0062.
   useEffect(() => {
     listPublicCharacters().then(setCharacters)
-    listSpells().then(setSpells)
+    Promise.all([listSpells(), listActions()]).then(([sp, ac]) => {
+      const merged = [...sp, ...ac].sort((a, b) =>
+        a.ability_name.localeCompare(b.ability_name),
+      )
+      setSpells(merged)
+    })
     listSkills().then(setSkillsCatalog)
   }, [])
 
@@ -536,7 +570,7 @@ export function DamageCalculator() {
             value={spellId}
             onChange={(e) => setSpellId(e.target.value)}
           >
-            <option value="">Pick a spell…</option>
+            <option value="">Pick an ability…</option>
             {(spells ?? []).map((s) => (
               <option key={s.asset_name} value={s.asset_name}>
                 {s.ability_name}
@@ -548,6 +582,8 @@ export function DamageCalculator() {
               spell={spell}
               damageOv={spellDamageOv}
               setDamageOv={setSpellDamageOv}
+              powerCoefOv={spellPowerCoefOv}
+              setPowerCoefOv={setSpellPowerCoefOv}
             />
           )}
         </PickerCard>
@@ -592,8 +628,11 @@ export function DamageCalculator() {
           />
           <span>Force crit</span>
         </label>
-        <label className="dmg-toggle">
-          <span>Power coefficient</span>
+        <label
+          className="dmg-toggle"
+          title="Multiplier on top of each ability's own power_coefficient. 1 = no-op."
+        >
+          <span>Power coef multiplier</span>
           <input
             type="number"
             step="0.1"
@@ -632,6 +671,7 @@ export function DamageCalculator() {
           attackerAbilityOv={attackerAbilityOv}
           defenderAbilityOv={defenderAbilityOv}
           spellDamageOv={spellDamageOv}
+          spellPowerCoefOv={spellPowerCoefOv}
           proficiencyOv={proficiencyOv}
           rollSeed={rollSeed}
           onReroll={() => setRollSeed((s) => s + 1)}
@@ -640,7 +680,7 @@ export function DamageCalculator() {
         />
       ) : (
         <div className="dmg-placeholder">
-          Pick an attacker, defender, and spell to see the math.
+          Pick an attacker, defender, and ability to see the math.
         </div>
       )}
     </div>
@@ -768,7 +808,7 @@ function EditableCharacterCard({
   setOverrides: (o: StatOverrides) => void
   abilityOverrides: StatOverrides
   setAbilityOverrides: (o: StatOverrides) => void
-  spell: Spell | null
+  spell: Action | null
   skillsCatalog: Skill[] | null
   proficiencyOv: number | undefined
   setProficiencyOv: (n: number | undefined) => void
@@ -934,42 +974,82 @@ function EditableCharacterCard({
   )
 }
 
-// Spell card. Base damage is editable; the rest (school, type, cast time, …)
-// stays read-only since changing them would mean the spell isn't really the
-// same spell anymore.
+// Spell card. Base damage and power coefficient are editable; the rest
+// (school, type, cast time, …) stays read-only since changing them would
+// mean the spell isn't really the same spell anymore.
+//
+// For weapon-gated actions, the displayed Base damage default comes from
+// the attacker's equipped weapon (resolveBaseDamage). The user can still
+// override either way.
 function EditableSpellCard({
   spell,
   damageOv,
   setDamageOv,
+  powerCoefOv,
+  setPowerCoefOv,
 }: {
-  spell: Spell
+  spell: Action
   damageOv: number | undefined
   setDamageOv: (n: number | undefined) => void
+  powerCoefOv: number | undefined
+  setPowerCoefOv: (n: number | undefined) => void
 }) {
-  const damageIsOverride = damageOv !== undefined
-  const damage = damageIsOverride ? (damageOv as number) : spell.damage
+  const resolved = resolveBaseDamage(spell)
+  const baseIsOverride = damageOv !== undefined
+  const baseDamage = baseIsOverride ? (damageOv as number) : resolved.base
+  const coefIsOverride = powerCoefOv !== undefined
+  const coef = coefIsOverride ? (powerCoefOv as number) : spell.power_coefficient
+
   return (
     <>
       <div className="dmg-char-id">{spell.ability_name}</div>
       <dl className="dmg-keyvals">
         <div className="dmg-kv">
-          <dt>Base damage</dt>
+          <dt>Flat base damage</dt>
           <dd>
             <input
               type="number"
               step="1"
               min="0"
-              value={damage}
+              value={baseDamage}
               onChange={(e) => setDamageOv(Math.max(0, Number(e.target.value) || 0))}
-              className={`dmg-stat-input${damageIsOverride ? ' dmg-stat-input-override' : ''}`}
+              className={`dmg-stat-input${baseIsOverride ? ' dmg-stat-input-override' : ''}`}
             />
-            {damageIsOverride && (
+            {baseIsOverride && (
               <button
                 type="button"
                 className="dmg-stat-reset"
                 onClick={() => setDamageOv(undefined)}
-                title={`Reset to spell value (${fmt(spell.damage)})`}
+                title={`Reset to ability value (${fmt(resolved.base)})`}
                 aria-label="Reset base damage"
+              >
+                ×
+              </button>
+            )}
+            <div className="dmg-stat-caption">
+              percentage-scaled abilities use 0; sets a flat baseline added
+              before stat scaling.
+            </div>
+          </dd>
+        </div>
+        <div className="dmg-kv">
+          <dt>Power coef</dt>
+          <dd>
+            <input
+              type="number"
+              step="0.1"
+              min="0"
+              value={coef}
+              onChange={(e) => setPowerCoefOv(Math.max(0, Number(e.target.value) || 0))}
+              className={`dmg-stat-input${coefIsOverride ? ' dmg-stat-input-override' : ''}`}
+            />
+            {coefIsOverride && (
+              <button
+                type="button"
+                className="dmg-stat-reset"
+                onClick={() => setPowerCoefOv(undefined)}
+                title={`Reset to ability value (${fmt(spell.power_coefficient)})`}
+                aria-label="Reset power coefficient"
               >
                 ×
               </button>
@@ -1046,20 +1126,26 @@ type Step = {
 type PipelineOpts = {
   forceCrit: boolean
   forceHit: boolean
+  // Global multiplier on top of the ability's own power_coefficient.
+  // Default 1 = no-op; lets the user globally amplify or zero-out scaling
+  // for what-if testing without editing each ability.
   powerCoefficient: number
   rollFirst: boolean
   attackerOv: StatOverrides
   defenderOv: StatOverrides
   attackerAbilityOv: StatOverrides
   defenderAbilityOv: StatOverrides
+  // Override the ability's flat-base damage. Most percentage-scaled
+  // abilities have base = 0 so this is mostly a testing knob.
   spellDamageOv: number | undefined
+  spellPowerCoefOv: number | undefined
   proficiencyOv: number | undefined
 }
 
 function buildPipeline(
   attacker: SimpleCharacter,
   defender: SimpleCharacter,
-  spell: Spell,
+  spell: Action,
   skillsCatalog: Skill[] | null,
   opts: PipelineOpts,
 ): Step[] {
@@ -1072,33 +1158,37 @@ function buildPipeline(
 function buildPipelineRollFirst(
   attacker: SimpleCharacter,
   defender: SimpleCharacter,
-  spell: Spell,
+  spell: Action,
   skillsCatalog: Skill[] | null,
   opts: PipelineOpts,
 ): Step[] {
   const steps: Step[] = []
   const isHeal = spell.is_heal
-  const isMagic = !!spell.damage_school
+  // 'physical' is now an explicit damage_school (migration 0062) for
+  // weapon attacks, so plain truthiness no longer works — anything other
+  // than 'physical' (and not heal-style null) routes through the magical
+  // pipeline (spell_power scaling, magic_resist mitigation, spell_hit, …).
+  const isMagic =
+    !!spell.damage_school && spell.damage_school !== 'physical'
   const aStats = attacker.stats
   const dStats = defender.stats
-  const baseDamage = opts.spellDamageOv ?? spell.damage
+  // Base damage = ability flat baseline (usually 0 for percentage-scaled
+  // abilities post-migration 0064) + power × ability_coef × global_mult.
+  // Override available for testing arbitrary base values.
+  const resolvedBase = resolveBaseDamage(spell)
+  const flatBase = opts.spellDamageOv ?? resolvedBase.base
+  const powerStat = isHeal ? 'healing_power' : isMagic ? 'spell_power' : 'attack_power'
+  const power = effStat(aStats, powerStat, opts.attackerOv, attacker.abilities, opts.attackerAbilityOv)
+  const abilityCoef = opts.spellPowerCoefOv ?? spell.power_coefficient
+  const effCoef = abilityCoef * opts.powerCoefficient
+  const baseDamage = flatBase + power * effCoef
 
-  // The "range" object holds the visible bell window (where 99% of rolls
-  // land) and propagates through every downstream transformation so the
-  // Final card shows the true variance band after stat-scaling, crit, and
-  // mitigation. null when no roll happened (heal, zero-damage spell, or
-  // a missed hit).
   let value = baseDamage
   let range: { min: number; mean: number; max: number } | null = null
   let stepIdx = 0
-  const shiftRange = (delta: number) => {
-    if (range)
-      range = {
-        min: range.min + delta,
-        mean: range.mean + delta,
-        max: range.max + delta,
-      }
-  }
+
+  // Bell-window propagation helpers — used by Crit and Mitigation steps to
+  // shift / scale the displayed [min, peak, max] window alongside `value`.
   const scaleRange = (factor: number) => {
     if (range)
       range = {
@@ -1108,18 +1198,31 @@ function buildPipelineRollFirst(
       }
   }
 
-  // Base
+  // Base damage step — collapses the previous separate Base + Power-scaling
+  // steps into one since base now lives in `power × coef`. The flat
+  // baseline (spell.damage) is shown alongside as a transparent addition.
   steps.push({
     title: `${++stepIdx}. Base damage`,
-    inputs: <>spell.damage = {fmt(baseDamage)}</>,
-    formula: <>value = {fmt(baseDamage)}</>,
+    inputs: (
+      <>
+        flat base = {fmt(flatBase)} · attacker.{powerStat} = {fmt(power)} ·
+        ability coef = {fmt(abilityCoef, 2)} · global mult ={' '}
+        {fmt(opts.powerCoefficient, 2)} · effective = {fmt(effCoef, 2)}
+      </>
+    ),
+    formula: (
+      <>
+        value = {fmt(flatBase)} + {fmt(power)} × {fmt(effCoef, 2)} ={' '}
+        {fmt(value)}
+      </>
+    ),
     output: value,
   })
 
-  // Damage roll — proficiency-driven Gaussian on [1, baseDamage]. Doing
-  // this BEFORE stat scaling matches the WoW model: the weapon-base roll
-  // is what carries variance, and stats then amplify whatever you rolled.
-  // Heals skip the roll — they stay deterministic.
+  // Damage roll — proficiency-driven Gaussian on [1, value]. Doing this
+  // BEFORE the rest of the pipeline (in roll-first mode) matches the WoW
+  // weapon-roll model: the bell carries variance, then stats amplify
+  // whatever you rolled. Heals skip the roll — deterministic.
   if (!isHeal && value > 0) {
     const fetchedProf = proficiencyLevelFor(attacker, spell, skillsCatalog)
     const effLevel = Math.max(
@@ -1137,8 +1240,12 @@ function buildPipelineRollFirst(
         : fetchedProf !== null
           ? `${fetchedProf.skillName} lv ${effLevel} / ${MAX_SKILL_LEVEL}`
           : `no weapon proficiency · default lv ${effLevel}`
+    // Bell curve always runs on [1, value] regardless of source — for
+    // weapons, value is the post-weapon-roll cap; for spells it's
+    // spell.damage. Proficiency drives where the bell peaks within that
+    // window.
     const a = 1
-    const b = Math.max(1, Math.ceil(baseDamage))
+    const b = Math.max(1, Math.ceil(value))
     const { peak, sigma } = rollParams(a, b, peakFraction)
     const x = rollDamage(a, b, peakFraction)
     const sample = Math.max(1, Math.round(x))
@@ -1173,33 +1280,6 @@ function buildPipelineRollFirst(
       skipped: 'Heals skip the roll',
     })
   }
-
-  // Power scaling — additive bonus on top of the rolled base. Shifts the
-  // entire bell window by the same flat amount.
-  const powerStat = isHeal ? 'healing_power' : isMagic ? 'spell_power' : 'attack_power'
-  const power = effStat(aStats, powerStat, opts.attackerOv, attacker.abilities, opts.attackerAbilityOv)
-  const powerLabel = isHeal ? 'healing power' : isMagic ? 'spell power' : 'attack power'
-  const before3 = value
-  const powerAdd = power * opts.powerCoefficient
-  value = value + powerAdd
-  shiftRange(powerAdd)
-  steps.push({
-    title: `${++stepIdx}. ${capitalize(powerLabel)} scaling`,
-    inputs: (
-      <>
-        attacker.{powerStat} = {fmt(power)} · coefficient ={' '}
-        {fmt(opts.powerCoefficient)}
-      </>
-    ),
-    formula: (
-      <>
-        value = {fmt(before3)} + {fmt(power)} × {fmt(opts.powerCoefficient)} ={' '}
-        {fmt(value)}
-      </>
-    ),
-    output: value,
-    range: range ?? undefined,
-  })
 
   // Attack outcome — one step per band so the user can read the
   // resolution sequence: miss → dodge → parry → block → hit. All bands
@@ -1375,43 +1455,46 @@ function buildPipelineRollFirst(
 function buildPipelineRollLast(
   attacker: SimpleCharacter,
   defender: SimpleCharacter,
-  spell: Spell,
+  spell: Action,
   skillsCatalog: Skill[] | null,
   opts: PipelineOpts,
 ): Step[] {
   const steps: Step[] = []
   const isHeal = spell.is_heal
-  const isMagic = !!spell.damage_school
+  // 'physical' is now an explicit damage_school (migration 0062) for
+  // weapon attacks, so plain truthiness no longer works — anything other
+  // than 'physical' (and not heal-style null) routes through the magical
+  // pipeline (spell_power scaling, magic_resist mitigation, spell_hit, …).
+  const isMagic =
+    !!spell.damage_school && spell.damage_school !== 'physical'
   const aStats = attacker.stats
   const dStats = defender.stats
-  const baseDamage = opts.spellDamageOv ?? spell.damage
+  // Base damage = ability flat baseline (usually 0 for percentage-scaled
+  // abilities post-migration 0064) + power × ability_coef × global_mult.
+  // This collapses the previous separate Base + Power-scaling steps —
+  // damage now flows from stats × coefficient as the source of truth.
+  const resolvedBase = resolveBaseDamage(spell)
+  const flatBase = opts.spellDamageOv ?? resolvedBase.base
+  const powerStat = isHeal ? 'healing_power' : isMagic ? 'spell_power' : 'attack_power'
+  const power = effStat(aStats, powerStat, opts.attackerOv, attacker.abilities, opts.attackerAbilityOv)
+  const abilityCoef = opts.spellPowerCoefOv ?? spell.power_coefficient
+  const effCoef = abilityCoef * opts.powerCoefficient
+  const baseDamage = flatBase + power * effCoef
 
   let value = baseDamage
   let stepIdx = 0
   steps.push({
     title: `${++stepIdx}. Base damage`,
-    inputs: <>spell.damage = {fmt(baseDamage)}</>,
-    formula: <>value = {fmt(baseDamage)}</>,
-    output: value,
-  })
-
-  // Power scaling
-  const powerStat = isHeal ? 'healing_power' : isMagic ? 'spell_power' : 'attack_power'
-  const power = effStat(aStats, powerStat, opts.attackerOv, attacker.abilities, opts.attackerAbilityOv)
-  const powerLabel = isHeal ? 'healing power' : isMagic ? 'spell power' : 'attack power'
-  const before2 = value
-  value = value + power * opts.powerCoefficient
-  steps.push({
-    title: `${++stepIdx}. ${capitalize(powerLabel)} scaling`,
     inputs: (
       <>
-        attacker.{powerStat} = {fmt(power)} · coefficient ={' '}
-        {fmt(opts.powerCoefficient)}
+        flat base = {fmt(flatBase)} · attacker.{powerStat} = {fmt(power)} ·
+        ability coef = {fmt(abilityCoef, 2)} · global mult ={' '}
+        {fmt(opts.powerCoefficient, 2)} · effective = {fmt(effCoef, 2)}
       </>
     ),
     formula: (
       <>
-        value = {fmt(before2)} + {fmt(power)} × {fmt(opts.powerCoefficient)} ={' '}
+        value = {fmt(flatBase)} + {fmt(power)} × {fmt(effCoef, 2)} ={' '}
         {fmt(value)}
       </>
     ),
@@ -1491,7 +1574,7 @@ function buildPipelineRollLast(
     }
   }
 
-  // Crit
+  // Crit — multiplicative on the running max value.
   const critStat = isHeal ? 'heal_crit' : isMagic ? 'spell_crit' : 'crit_chance'
   const critChance = effStat(aStats, critStat, opts.attackerOv, attacker.abilities, opts.attackerAbilityOv)
   const critBonus = effStat(aStats, 'crit_damage', opts.attackerOv, attacker.abilities, opts.attackerAbilityOv) / 100
@@ -1529,7 +1612,7 @@ function buildPipelineRollLast(
     })
   }
 
-  // Mitigation
+  // Mitigation — multiplicative on the running max value.
   if (isHeal) {
     steps.push({
       title: `${++stepIdx}. Mitigation`,
@@ -1562,7 +1645,9 @@ function buildPipelineRollLast(
   }
 
   // Damage roll — proficiency-driven Gaussian on [1, value] (the post-
-  // mitigation envelope). Heals skip — they stay deterministic.
+  // mitigation cap). The "weapon damage roll" earlier already injected
+  // weapon-range randomness; this bell adds the proficiency-driven curve
+  // on top. Heals skip — they stay deterministic.
   let range: { min: number; mean: number; max: number } | null = null
   if (!isHeal && value > 0) {
     const fetchedProf = proficiencyLevelFor(attacker, spell, skillsCatalog)
@@ -1646,6 +1731,7 @@ function Pipeline({
   attackerAbilityOv,
   defenderAbilityOv,
   spellDamageOv,
+  spellPowerCoefOv,
   proficiencyOv,
   rollSeed,
   onReroll,
@@ -1654,7 +1740,7 @@ function Pipeline({
 }: {
   attacker: SimpleCharacter
   defender: SimpleCharacter
-  spell: Spell
+  spell: Action
   skillsCatalog: Skill[] | null
   forceCrit: boolean
   forceHit: boolean
@@ -1665,6 +1751,7 @@ function Pipeline({
   attackerAbilityOv: StatOverrides
   defenderAbilityOv: StatOverrides
   spellDamageOv: number | undefined
+  spellPowerCoefOv: number | undefined
   proficiencyOv: number | undefined
   rollSeed: number
   onReroll: () => void
@@ -1686,6 +1773,7 @@ function Pipeline({
         attackerAbilityOv,
         defenderAbilityOv,
         spellDamageOv,
+        spellPowerCoefOv,
         proficiencyOv,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1693,7 +1781,7 @@ function Pipeline({
       attacker, defender, spell, skillsCatalog,
       forceCrit, forceHit, powerCoefficient, rollFirst,
       attackerOv, defenderOv, attackerAbilityOv, defenderAbilityOv,
-      spellDamageOv, proficiencyOv,
+      spellDamageOv, spellPowerCoefOv, proficiencyOv,
       rollSeed,
     ],
   )
@@ -1731,6 +1819,7 @@ function Pipeline({
         attackerAbilityOv,
         defenderAbilityOv,
         spellDamageOv,
+        spellPowerCoefOv,
         proficiencyOv,
       })
       const final = s[s.length - 1].output
@@ -1814,7 +1903,7 @@ function Pipeline({
     attacker, defender, spell, skillsCatalog,
     forceCrit, forceHit, powerCoefficient, rollFirst,
     attackerOv, defenderOv, attackerAbilityOv, defenderAbilityOv,
-    spellDamageOv, proficiencyOv,
+    spellDamageOv, spellPowerCoefOv, proficiencyOv,
     nRolls, multiSeed,
   ])
 
@@ -2028,6 +2117,3 @@ function Histogram({ multi }: { multi: MultiRollResult }) {
   )
 }
 
-function capitalize(s: string): string {
-  return s.length === 0 ? s : s.charAt(0).toUpperCase() + s.slice(1)
-}

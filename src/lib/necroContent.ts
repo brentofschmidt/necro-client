@@ -324,11 +324,19 @@ export type Action = {
   is_heal: boolean
   required_weapon_types: string[]
   effects: ActionEffect[]
+  // Damage and damage_school live on both actions and spells as of
+  // migration 0062. Actions default to damage = 0, damage_school =
+  // 'physical' (NOT NULL); spells keep nullable damage_school for heals.
+  damage: number
+  damage_school: string | null
+  // Per-ability scaling factor on the attacker's power stat — added in
+  // migration 0063. 0 = ability ignores power scaling; 1 = full 1:1 scaling
+  // with the appropriate power stat (attack/spell/healing). Defaults to 0
+  // for actions, 1 for spells.
+  power_coefficient: number
 }
 
 export type Spell = Action & {
-  damage: number
-  damage_school: string | null
   splash_radius: number | null
   splash_damage_multiplier: number | null
 }
@@ -756,7 +764,7 @@ export async function listInventorySlots(): Promise<InventorySlot[]> {
 }
 
 const ACTION_COLUMNS =
-  'asset_name, ability_name, description, type, targeting, resource_type, resource_cost, cooldown, cast_time, global_cooldown, range, requires_target, is_heal, required_weapon_types, effects'
+  'asset_name, ability_name, description, type, targeting, resource_type, resource_cost, cooldown, cast_time, global_cooldown, range, requires_target, is_heal, required_weapon_types, effects, damage, damage_school, power_coefficient'
 
 export async function listActions(): Promise<Action[]> {
   const { data, error } = await supabase
@@ -779,7 +787,7 @@ export async function listSpells(): Promise<Spell[]> {
   const { data, error } = await supabase
     .schema('necro_content')
     .from('spells')
-    .select(`${ACTION_COLUMNS}, damage, damage_school, splash_radius, splash_damage_multiplier`)
+    .select(`${ACTION_COLUMNS}, splash_radius, splash_damage_multiplier`)
     .order('ability_name', { ascending: true })
   if (error) {
     console.error('Failed to load spells:', error.message)

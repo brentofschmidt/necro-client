@@ -2898,6 +2898,10 @@ a.content-card.content-card-link:hover {
   margin: 0;
   color: var(--text);
   font-variant-numeric: tabular-nums;
+  /* Right-align inline content (input + reset button) so when a caption
+     under the input widens dd to match its text, the input still sits
+     flush against dd's right edge instead of drifting leftward. */
+  text-align: right;
 }
 
 .dmg-toggles {
@@ -3424,6 +3428,18 @@ a.content-card.content-card-link:hover {
   margin-left: 4px;
   color: var(--text-dim);
   font-size: 11px;
+}
+
+/* Small italic caption under a stat input — used by the spell card to
+   note where the default came from ("from weapon: Iron Sword" or
+   "no sword equipped"). Sits flush under the input so it's visually
+   linked to the value above. */
+.dmg-stat-caption {
+  margin-top: 3px;
+  font-size: 10px;
+  font-style: italic;
+  color: var(--text-dim);
+  text-align: right;
 }
 
 .dmg-stat-reset {
