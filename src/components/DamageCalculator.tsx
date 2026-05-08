@@ -625,7 +625,15 @@ export function DamageCalculator() {
               </option>
             ))}
           </select>
-          {spell && <EditableSpellCard spell={spell} />}
+          {spell && (
+            <EditableSpellCard
+              spell={spell}
+              attacker={attacker}
+              attackerOv={attackerOv}
+              attackerAbilityOv={attackerAbilityOv}
+              powerCoefficient={powerCoefficient}
+            />
+          )}
         </PickerCard>
 
         <PickerCard title="Defender" tone="defender">
@@ -1016,15 +1024,61 @@ function EditableCharacterCard({
 // so there's no parent-level base damage or power coefficient to override
 // at the spell card level. Per-effect coefficients live on the effects
 // themselves and would need a per-effect override UI to tweak — out of
-// scope for now. The card just shows ability metadata + a summary of
-// each Damage/Heal effect's scaling.
+// scope for now. The card shows ability metadata + each Damage/Heal
+// effect's scaling summary AND — when an attacker is selected — the
+// calculated base damage right next to it (power × coef × global,
+// matching the per-effect base step the pipeline runs in step 3).
 function EditableSpellCard({
   spell,
+  attacker,
+  attackerOv,
+  attackerAbilityOv,
+  powerCoefficient,
 }: {
   spell: Action
+  attacker: SimpleCharacter | null
+  attackerOv: StatOverrides
+  attackerAbilityOv: StatOverrides
+  powerCoefficient: number
 }) {
-  const damageEffects = (spell.effects ?? []).filter(
-    (e) => e.type === 'Damage' || e.type === 'Heal',
+  // normaliseEffects already filters to Damage / Heal entries and resolves
+  // each effect's school (falling back to the parent's damage_school when
+  // the effect doesn't declare one). Iterating it directly keeps the spell
+  // card's effect rows in 1:1 correspondence with the per-effect rows the
+  // pipeline emits below.
+  const calcEffects = normaliseEffects(spell)
+  // Mirrors buildPipeline's per-effect base step: power stat is chosen by
+  // (heal? → healing_power; non-physical school → spell_power; else →
+  // attack_power), and value = power × effect.coefficient × global_mult.
+  const effRows = calcEffects.map((eff) => {
+    const isHeal = eff.type === 'Heal'
+    const isMagic = effectIsMagic(eff)
+    const powerStat = isHeal
+      ? 'healing_power'
+      : isMagic
+        ? 'spell_power'
+        : 'attack_power'
+    const power = attacker
+      ? effStat(
+          attacker.stats,
+          powerStat,
+          attackerOv,
+          attacker.abilities,
+          attackerAbilityOv,
+        )
+      : null
+    const effCoef = eff.coefficient * powerCoefficient
+    return {
+      eff,
+      powerStat,
+      power,
+      effCoef,
+      value: power !== null ? power * effCoef : null,
+    }
+  })
+  const totalBase = effRows.reduce(
+    (sum, r) => sum + (r.value ?? 0),
+    0,
   )
   return (
     <>
@@ -1050,25 +1104,78 @@ function EditableSpellCard({
           <dt>Cast time</dt>
           <dd>{spell.cast_time > 0 ? `${spell.cast_time}s` : 'Instant'}</dd>
         </div>
-        <div className="dmg-kv">
-          <dt>Effects</dt>
-          <dd>
-            {damageEffects.length === 0 ? (
-              <span className="dmg-stat-caption">no damage / heal effects</span>
-            ) : (
-              damageEffects.map((e, i) => (
-                <div key={i} className="dmg-stat-caption">
-                  {e.type} ·{' '}
-                  {typeof e.coefficient === 'number'
-                    ? `${(e.coefficient * 100).toFixed(0)}% power`
-                    : 'no scaling'}
-                  {typeof e.school === 'string' ? ` · ${e.school}` : ''}
-                </div>
-              ))
-            )}
-          </dd>
-        </div>
       </dl>
+
+      <div className="dmg-card-section-label">Effects</div>
+      {effRows.length === 0 ? (
+        <div className="dmg-effects-empty">no damage / heal effects</div>
+      ) : (
+        <div className="dmg-effects">
+          {effRows.map((r, i) => {
+            const schoolKind = effectIsMagic(r.eff) ? 'magical' : 'physical'
+            return (
+              <div key={i} className="dmg-effect">
+                <div className="dmg-effect-head">
+                  <span className="dmg-effect-num">
+                    Effect {r.eff.index + 1}
+                  </span>
+                  <span className="dmg-effect-tags">
+                    <span className={`dmg-effect-tag dmg-effect-tag-${r.eff.type.toLowerCase()}`}>
+                      {r.eff.type}
+                    </span>
+                    {r.eff.school && (
+                      <span className={`dmg-effect-tag dmg-effect-tag-${schoolKind}`}>
+                        {r.eff.school}
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <dl className="dmg-effect-grid">
+                  <dt>Coef</dt>
+                  <dd>
+                    {fmt(r.eff.coefficient, 2)}
+                    {powerCoefficient !== 1 && (
+                      <span className="dmg-effect-grid-mute">
+                        {' '}
+                        × {fmt(powerCoefficient, 2)} = {fmt(r.effCoef, 2)}
+                      </span>
+                    )}
+                  </dd>
+                  <dt>Power</dt>
+                  <dd>
+                    {r.power === null ? (
+                      <span className="dmg-effect-grid-mute">—</span>
+                    ) : (
+                      <>
+                        <span className="dmg-effect-grid-mute">
+                          {r.powerStat}
+                        </span>{' '}
+                        {fmt(r.power)}
+                      </>
+                    )}
+                  </dd>
+                  <dt>Base</dt>
+                  <dd className="dmg-effect-grid-base">
+                    {r.value === null ? (
+                      <span className="dmg-effect-grid-mute">
+                        pick an attacker
+                      </span>
+                    ) : (
+                      fmt(r.value)
+                    )}
+                  </dd>
+                </dl>
+              </div>
+            )
+          })}
+          {attacker && effRows.length > 1 && (
+            <div className="dmg-effect-total">
+              <span className="dmg-effect-total-label">Total base</span>
+              <span className="dmg-effect-total-value">{fmt(totalBase)}</span>
+            </div>
+          )}
+        </div>
+      )}
     </>
   )
 }

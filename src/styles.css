@@ -513,6 +513,54 @@ body {
   margin-bottom: 6px;
 }
 
+/* Per-effect group — wraps the steps that re-run for each Damage / Heal
+   entry in the ability's effects array. Dashed border + "loop" badge make
+   it visually distinct from the shared steps above and below it. */
+.flowchart-effect-block {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 14px 16px 18px;
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.flowchart-effect-block-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.flowchart-effect-block-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.flowchart-effect-block-label {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--text);
+}
+
+.flowchart-effect-block-blurb {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+
+.flowchart-effect-step {
+  display: flex;
+  flex-direction: column;
+}
+
 /* "Skipped" placeholder in the inactive side of a forked step (e.g. dodge
    on the magical path). Tinted dim and italic so it reads as inert. */
 .flowchart-skipped {
@@ -3428,6 +3476,150 @@ a.content-card.content-card-link:hover {
   margin-left: 4px;
   color: var(--text-dim);
   font-size: 11px;
+}
+
+/* Spell card effects panel — one tabulated block per Damage / Heal
+   effect, mirroring the per-effect base step the pipeline runs. Each
+   block has a header (effect index + Type / school chips) and a 2-col
+   label/value grid (Coef, Power, Base). Multi-effect abilities also
+   render a Total base row at the bottom. Lives outside .dmg-keyvals
+   because the kv layout is too narrow once you fold in the chips. */
+.dmg-effects {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.dmg-effects-empty {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.dmg-effect {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px 10px;
+  min-width: 0;
+}
+
+.dmg-effect-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.dmg-effect-num {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.dmg-effect-tags {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.dmg-effect-tag {
+  font-family: 'Consolas', 'Menlo', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: lowercase;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.dmg-effect-tag-damage {
+  border-color: rgba(214, 90, 90, 0.45);
+  color: #d65a5a;
+}
+
+.dmg-effect-tag-heal {
+  border-color: rgba(120, 220, 140, 0.45);
+  color: #78dc8c;
+}
+
+.dmg-effect-tag-physical {
+  border-color: rgba(214, 90, 90, 0.35);
+}
+
+.dmg-effect-tag-magical {
+  border-color: rgba(90, 140, 214, 0.45);
+  color: #5a8cd6;
+}
+
+.dmg-effect-grid {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 12px;
+  row-gap: 3px;
+  font-size: 12px;
+}
+
+.dmg-effect-grid dt {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  align-self: baseline;
+}
+
+.dmg-effect-grid dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: 'Consolas', 'Menlo', monospace;
+  color: var(--text);
+  min-width: 0;
+}
+
+.dmg-effect-grid-mute {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.dmg-effect-grid-base {
+  color: #78dc8c;
+  font-weight: 700;
+}
+
+.dmg-effect-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 6px 10px 2px;
+  border-top: 1px dashed var(--border);
+}
+
+.dmg-effect-total-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.dmg-effect-total-value {
+  font-family: 'Consolas', 'Menlo', monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  font-weight: 700;
+  color: #78dc8c;
 }
 
 /* Small italic caption under a stat input — used by the spell card to
