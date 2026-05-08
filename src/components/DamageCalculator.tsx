@@ -47,8 +47,14 @@ type SimpleCharacter = {
 const MITIGATION_K = 100
 
 // Base miss chance the attacker has to overcome with hit_chance bonuses.
-// 5% follows the WoW classic convention (white-attack base miss).
-const BASE_MISS_CHANCE = 5
+// 10% gives hit_chance investment some meaningful headroom — a well-built
+// character chips it down toward MIN_MISS_CHANCE, but never to 0.
+const BASE_MISS_CHANCE = 10
+
+// Floor on miss chance — even hit-capped characters miss this often. Keeps
+// "I never miss" from being a real outcome and preserves the variance the
+// combat log expects to surface occasionally.
+const MIN_MISS_CHANCE = 2
 
 // Damage multiplier applied on a successful BLOCK outcome. 0.5 = "blocked
 // for half" — block isn't a full evasion, it's a partial mitigation.
@@ -166,7 +172,12 @@ function resolveAttack(args: {
   defenderBlock: number
   forceHit: boolean
 }): AttackResolution {
-  const missChance = Math.max(0, BASE_MISS_CHANCE - args.hitChanceBonus)
+  // Hit chance reduces miss but never below MIN_MISS_CHANCE — accounts
+  // for "always some chance to miss" the combat log wants to keep alive.
+  const missChance = Math.max(
+    MIN_MISS_CHANCE,
+    BASE_MISS_CHANCE - args.hitChanceBonus,
+  )
   const bands: AttackBand[] = [{ name: 'MISS', chance: missChance }]
   if (!args.isMagic) {
     bands.push({ name: 'DODGE', chance: Math.max(0, args.defenderDodge) })
@@ -290,10 +301,10 @@ function statContributionsFromAbilities(a: {
     // get_public_character_calculated_stats.
     hit_chance: dexBase + strBase,
     spell_hit: intBase + wisBase + chaBase,
-    expertise: chaBase,
     mana_regen: f(a.wisdom / 4),
     health_regen: f(a.constitution / 5),
-    versatility: f(a.charisma / 5),
+    // versatility / mastery / expertise / life_steal removed in 0068 —
+    // they were WoW imports that didn't fit the more D&D-flavoured model.
   }
 }
 
@@ -363,17 +374,58 @@ async function loadCharacter(id: string): Promise<SimpleCharacter | null> {
   return { detail, stats, skills, abilities, equipment }
 }
 
-// Resolves the FLAT base damage for an ability. Per migration 0064 every
-// damaging ability is now percentage-of-power scaled (base damage flows
-// from `power_coefficient × power_stat` in the pipeline's power-scaling
-// step), so this just returns the ability's intrinsic flat baseline (0
-// for the seeded percentage-scaled abilities; non-zero only if a future
-// design wants a hybrid flat+percent model).
+// A "calculable" effect — Damage or Heal — pulled out of an ability's
+// effects array and normalised. Each one runs through the pipeline as its
+// own sub-resolution: base damage, crit application, mitigation (routed
+// by THIS effect's school), damage roll. Total damage/healing for an
+// attack is the sum across all calculable effects.
 //
-// Equipment is no longer consulted — weapons contribute via stat bonuses
-// (str/agi/int) which feed AP/SP, not via a damage range.
-function resolveBaseDamage(ability: Action): { base: number } {
-  return { base: ability.damage }
+// StatModifier / non-numeric effects are filtered out — they apply as
+// auras and don't contribute to the damage number.
+type CalcEffect = {
+  index: number
+  description: string
+  type: 'Damage' | 'Heal'
+  coefficient: number
+  school: string | null
+  target: string
+}
+
+// Normalises a spell's effects array into per-effect calc inputs. As of
+// migration 0066, abilities are required to declare their own Damage/Heal
+// effects — no parent-level fallback. If the array is empty (a buff or
+// non-damaging utility), the calculator simply produces 0 damage; the
+// attack outcome and crit rolls still fire for completeness.
+function normaliseEffects(ability: Action): CalcEffect[] {
+  const calculable: CalcEffect[] = []
+  let idx = 0
+  for (const eff of ability.effects ?? []) {
+    if (eff.type !== 'Damage' && eff.type !== 'Heal') continue
+    const coef =
+      typeof eff.coefficient === 'number' ? eff.coefficient : 0
+    const school =
+      typeof eff.school === 'string' ? eff.school : ability.damage_school ?? null
+    calculable.push({
+      index: idx++,
+      description:
+        typeof eff.description === 'string'
+          ? eff.description
+          : `${eff.type} effect`,
+      type: eff.type,
+      coefficient: coef,
+      school,
+      target: typeof eff.target === 'string' ? eff.target : 'Primary',
+    })
+  }
+  return calculable
+}
+
+// Given an effect's school, returns whether the calculator should route
+// it through the magical (spell_power, magic_resist) pipeline or the
+// physical (attack_power, armor) one. Heals use healing_power regardless
+// of school.
+function effectIsMagic(effect: CalcEffect): boolean {
+  return !!effect.school && effect.school !== 'physical'
 }
 
 // Resolves the attacker's weapon proficiency level for the action being used.
@@ -440,8 +492,6 @@ export function DamageCalculator() {
   const [defenderOv, setDefenderOv] = useState<StatOverrides>({})
   const [attackerAbilityOv, setAttackerAbilityOv] = useState<StatOverrides>({})
   const [defenderAbilityOv, setDefenderAbilityOv] = useState<StatOverrides>({})
-  const [spellDamageOv, setSpellDamageOv] = useState<number | undefined>()
-  const [spellPowerCoefOv, setSpellPowerCoefOv] = useState<number | undefined>()
   const [proficiencyOv, setProficiencyOv] = useState<number | undefined>()
   useEffect(() => {
     setAttackerOv({})
@@ -452,8 +502,6 @@ export function DamageCalculator() {
     setDefenderAbilityOv({})
   }, [defenderId])
   useEffect(() => {
-    setSpellDamageOv(undefined)
-    setSpellPowerCoefOv(undefined)
     setProficiencyOv(undefined)
   }, [spellId, attackerId])
 
@@ -577,15 +625,7 @@ export function DamageCalculator() {
               </option>
             ))}
           </select>
-          {spell && (
-            <EditableSpellCard
-              spell={spell}
-              damageOv={spellDamageOv}
-              setDamageOv={setSpellDamageOv}
-              powerCoefOv={spellPowerCoefOv}
-              setPowerCoefOv={setSpellPowerCoefOv}
-            />
-          )}
+          {spell && <EditableSpellCard spell={spell} />}
         </PickerCard>
 
         <PickerCard title="Defender" tone="defender">
@@ -670,8 +710,6 @@ export function DamageCalculator() {
           defenderOv={defenderOv}
           attackerAbilityOv={attackerAbilityOv}
           defenderAbilityOv={defenderAbilityOv}
-          spellDamageOv={spellDamageOv}
-          spellPowerCoefOv={spellPowerCoefOv}
           proficiencyOv={proficiencyOv}
           rollSeed={rollSeed}
           onReroll={() => setRollSeed((s) => s + 1)}
@@ -974,88 +1012,24 @@ function EditableCharacterCard({
   )
 }
 
-// Spell card. Base damage and power coefficient are editable; the rest
-// (school, type, cast time, …) stays read-only since changing them would
-// mean the spell isn't really the same spell anymore.
-//
-// For weapon-gated actions, the displayed Base damage default comes from
-// the attacker's equipped weapon (resolveBaseDamage). The user can still
-// override either way.
+// Spell card. Damage / heal output is fully effect-driven (migration 0066),
+// so there's no parent-level base damage or power coefficient to override
+// at the spell card level. Per-effect coefficients live on the effects
+// themselves and would need a per-effect override UI to tweak — out of
+// scope for now. The card just shows ability metadata + a summary of
+// each Damage/Heal effect's scaling.
 function EditableSpellCard({
   spell,
-  damageOv,
-  setDamageOv,
-  powerCoefOv,
-  setPowerCoefOv,
 }: {
   spell: Action
-  damageOv: number | undefined
-  setDamageOv: (n: number | undefined) => void
-  powerCoefOv: number | undefined
-  setPowerCoefOv: (n: number | undefined) => void
 }) {
-  const resolved = resolveBaseDamage(spell)
-  const baseIsOverride = damageOv !== undefined
-  const baseDamage = baseIsOverride ? (damageOv as number) : resolved.base
-  const coefIsOverride = powerCoefOv !== undefined
-  const coef = coefIsOverride ? (powerCoefOv as number) : spell.power_coefficient
-
+  const damageEffects = (spell.effects ?? []).filter(
+    (e) => e.type === 'Damage' || e.type === 'Heal',
+  )
   return (
     <>
       <div className="dmg-char-id">{spell.ability_name}</div>
       <dl className="dmg-keyvals">
-        <div className="dmg-kv">
-          <dt>Flat base damage</dt>
-          <dd>
-            <input
-              type="number"
-              step="1"
-              min="0"
-              value={baseDamage}
-              onChange={(e) => setDamageOv(Math.max(0, Number(e.target.value) || 0))}
-              className={`dmg-stat-input${baseIsOverride ? ' dmg-stat-input-override' : ''}`}
-            />
-            {baseIsOverride && (
-              <button
-                type="button"
-                className="dmg-stat-reset"
-                onClick={() => setDamageOv(undefined)}
-                title={`Reset to ability value (${fmt(resolved.base)})`}
-                aria-label="Reset base damage"
-              >
-                ×
-              </button>
-            )}
-            <div className="dmg-stat-caption">
-              percentage-scaled abilities use 0; sets a flat baseline added
-              before stat scaling.
-            </div>
-          </dd>
-        </div>
-        <div className="dmg-kv">
-          <dt>Power coef</dt>
-          <dd>
-            <input
-              type="number"
-              step="0.1"
-              min="0"
-              value={coef}
-              onChange={(e) => setPowerCoefOv(Math.max(0, Number(e.target.value) || 0))}
-              className={`dmg-stat-input${coefIsOverride ? ' dmg-stat-input-override' : ''}`}
-            />
-            {coefIsOverride && (
-              <button
-                type="button"
-                className="dmg-stat-reset"
-                onClick={() => setPowerCoefOv(undefined)}
-                title={`Reset to ability value (${fmt(spell.power_coefficient)})`}
-                aria-label="Reset power coefficient"
-              >
-                ×
-              </button>
-            )}
-          </dd>
-        </div>
         <div className="dmg-kv">
           <dt>School</dt>
           <dd>{spell.damage_school ?? '—'}</dd>
@@ -1075,6 +1049,24 @@ function EditableSpellCard({
         <div className="dmg-kv">
           <dt>Cast time</dt>
           <dd>{spell.cast_time > 0 ? `${spell.cast_time}s` : 'Instant'}</dd>
+        </div>
+        <div className="dmg-kv">
+          <dt>Effects</dt>
+          <dd>
+            {damageEffects.length === 0 ? (
+              <span className="dmg-stat-caption">no damage / heal effects</span>
+            ) : (
+              damageEffects.map((e, i) => (
+                <div key={i} className="dmg-stat-caption">
+                  {e.type} ·{' '}
+                  {typeof e.coefficient === 'number'
+                    ? `${(e.coefficient * 100).toFixed(0)}% power`
+                    : 'no scaling'}
+                  {typeof e.school === 'string' ? ` · ${e.school}` : ''}
+                </div>
+              ))
+            )}
+          </dd>
         </div>
       </dl>
     </>
@@ -1135,10 +1127,6 @@ type PipelineOpts = {
   defenderOv: StatOverrides
   attackerAbilityOv: StatOverrides
   defenderAbilityOv: StatOverrides
-  // Override the ability's flat-base damage. Most percentage-scaled
-  // abilities have base = 0 so this is mostly a testing knob.
-  spellDamageOv: number | undefined
-  spellPowerCoefOv: number | undefined
   proficiencyOv: number | undefined
 }
 
@@ -1172,119 +1160,10 @@ function buildPipelineRollFirst(
     !!spell.damage_school && spell.damage_school !== 'physical'
   const aStats = attacker.stats
   const dStats = defender.stats
-  // Base damage = ability flat baseline (usually 0 for percentage-scaled
-  // abilities post-migration 0064) + power × ability_coef × global_mult.
-  // Override available for testing arbitrary base values.
-  const resolvedBase = resolveBaseDamage(spell)
-  const flatBase = opts.spellDamageOv ?? resolvedBase.base
-  const powerStat = isHeal ? 'healing_power' : isMagic ? 'spell_power' : 'attack_power'
-  const power = effStat(aStats, powerStat, opts.attackerOv, attacker.abilities, opts.attackerAbilityOv)
-  const abilityCoef = opts.spellPowerCoefOv ?? spell.power_coefficient
-  const effCoef = abilityCoef * opts.powerCoefficient
-  const baseDamage = flatBase + power * effCoef
-
-  let value = baseDamage
-  let range: { min: number; mean: number; max: number } | null = null
+  const calcEffects = normaliseEffects(spell)
   let stepIdx = 0
 
-  // Bell-window propagation helpers — used by Crit and Mitigation steps to
-  // shift / scale the displayed [min, peak, max] window alongside `value`.
-  const scaleRange = (factor: number) => {
-    if (range)
-      range = {
-        min: range.min * factor,
-        mean: range.mean * factor,
-        max: range.max * factor,
-      }
-  }
-
-  // Base damage step — collapses the previous separate Base + Power-scaling
-  // steps into one since base now lives in `power × coef`. The flat
-  // baseline (spell.damage) is shown alongside as a transparent addition.
-  steps.push({
-    title: `${++stepIdx}. Base damage`,
-    inputs: (
-      <>
-        flat base = {fmt(flatBase)} · attacker.{powerStat} = {fmt(power)} ·
-        ability coef = {fmt(abilityCoef, 2)} · global mult ={' '}
-        {fmt(opts.powerCoefficient, 2)} · effective = {fmt(effCoef, 2)}
-      </>
-    ),
-    formula: (
-      <>
-        value = {fmt(flatBase)} + {fmt(power)} × {fmt(effCoef, 2)} ={' '}
-        {fmt(value)}
-      </>
-    ),
-    output: value,
-  })
-
-  // Damage roll — proficiency-driven Gaussian on [1, value]. Doing this
-  // BEFORE the rest of the pipeline (in roll-first mode) matches the WoW
-  // weapon-roll model: the bell carries variance, then stats amplify
-  // whatever you rolled. Heals skip the roll — deterministic.
-  if (!isHeal && value > 0) {
-    const fetchedProf = proficiencyLevelFor(attacker, spell, skillsCatalog)
-    const effLevel = Math.max(
-      1,
-      opts.proficiencyOv !== undefined
-        ? opts.proficiencyOv
-        : fetchedProf?.level ?? Math.round(SPELL_PROFICIENCY_PEAK * MAX_SKILL_LEVEL),
-    )
-    const rawPeakFraction = Math.max(0, Math.min(1, effLevel / MAX_SKILL_LEVEL))
-    const peakFraction =
-      PEAK_FRACTION_MIN + (PEAK_FRACTION_MAX - PEAK_FRACTION_MIN) * rawPeakFraction
-    const peakSource =
-      opts.proficiencyOv !== undefined
-        ? `override lv ${effLevel} / ${MAX_SKILL_LEVEL}`
-        : fetchedProf !== null
-          ? `${fetchedProf.skillName} lv ${effLevel} / ${MAX_SKILL_LEVEL}`
-          : `no weapon proficiency · default lv ${effLevel}`
-    // Bell curve always runs on [1, value] regardless of source — for
-    // weapons, value is the post-weapon-roll cap; for spells it's
-    // spell.damage. Proficiency drives where the bell peaks within that
-    // window.
-    const a = 1
-    const b = Math.max(1, Math.ceil(value))
-    const { peak, sigma } = rollParams(a, b, peakFraction)
-    const x = rollDamage(a, b, peakFraction)
-    const sample = Math.max(1, Math.round(x))
-    const bellMin = Math.max(a, peak - ROLL_HALF_Z * sigma)
-    const bellMax = Math.min(b, peak + ROLL_HALF_Z * sigma)
-    range = { min: bellMin, mean: peak, max: bellMax }
-    value = sample
-    steps.push({
-      title: `${++stepIdx}. Damage roll`,
-      inputs: (
-        <>
-          peak fraction = {fmt(peakFraction, 2)} (raw {fmt(rawPeakFraction, 2)}{' '}
-          → clamped to [{PEAK_FRACTION_MIN}, {PEAK_FRACTION_MAX}], {peakSource}){' '}
-          · σ = {fmt(sigma, 2)} · sampled x = {fmt(x, 2)}
-        </>
-      ),
-      formula: (
-        <>
-          round(clamp(N({fmt(peak, 1)}, σ={fmt(sigma, 2)}) → [{a}, {b}])) ={' '}
-          {sample}
-        </>
-      ),
-      output: sample,
-      range,
-    })
-  } else if (isHeal) {
-    steps.push({
-      title: `${++stepIdx}. Damage roll`,
-      inputs: <>heals are deterministic — no roll</>,
-      formula: <>value unchanged</>,
-      output: value,
-      skipped: 'Heals skip the roll',
-    })
-  }
-
-  // Attack outcome — one step per band so the user can read the
-  // resolution sequence: miss → dodge → parry → block → hit. All bands
-  // share the SAME roll value (single-roll attack table); each step shows
-  // its band's [lo, hi) range and whether the roll fell inside it.
+  // ── Attack outcome (shared across all effects) ─────────────────────────
   const resolution = resolveAttack({
     isMagic,
     hitChanceBonus: effStat(aStats, isMagic ? 'spell_hit' : 'hit_chance', opts.attackerOv, attacker.abilities, opts.attackerAbilityOv),
@@ -1293,14 +1172,14 @@ function buildPipelineRollFirst(
     defenderBlock: effStat(dStats, 'block_chance', opts.defenderOv, defender.abilities, opts.defenderAbilityOv),
     forceHit: opts.forceHit,
   })
+  let blocked = false
   if (resolution.forced) {
     steps.push({
       title: `${++stepIdx}. Attack roll`,
       inputs: <>forced hit (toggle on)</>,
       formula: <>defensive bands skipped → continue</>,
-      output: value,
+      output: 0,
       outputLabel: 'HIT',
-      range: range ?? undefined,
     })
   } else {
     let cum = 0
@@ -1319,33 +1198,27 @@ function buildPipelineRollFirst(
         </>
       )
       if (isMine && (band.name === 'MISS' || band.name === 'DODGE' || band.name === 'PARRY')) {
-        value = 0
-        range = null
         steps.push({
           title: `${++stepIdx}. ${label} check`,
           inputs,
-          formula: <>roll lands in band → {label.toLowerCase()} (0 damage)</>,
+          formula: <>roll lands in band → {label.toLowerCase()} (0 damage, all effects)</>,
           output: 0,
           outputLabel: band.name,
         })
-        return appendFinal(steps, value, isHeal, null)
+        return appendFinal(steps, 0, isHeal, null)
       }
       if (isMine && band.name === 'BLOCK') {
-        const before = value
-        value *= BLOCK_MITIGATION
-        scaleRange(BLOCK_MITIGATION)
+        blocked = true
         steps.push({
           title: `${++stepIdx}. ${label} check`,
           inputs,
           formula: (
             <>
-              roll lands in band → blocked, value = {fmt(before)} ×{' '}
-              {BLOCK_MITIGATION} = {fmt(value)}
+              roll lands in band → blocked (each damage effect × {BLOCK_MITIGATION})
             </>
           ),
-          output: value,
+          output: 0,
           outputLabel: 'BLOCK',
-          range: range ?? undefined,
         })
         resolved = true
       } else {
@@ -1353,102 +1226,247 @@ function buildPipelineRollFirst(
           title: `${++stepIdx}. ${label} check`,
           inputs,
           formula: <>roll outside band → continue</>,
-          output: value,
-          range: range ?? undefined,
+          output: 0,
         })
       }
     }
   }
 
-  // Crit — multiplicative on the rolled-and-scaled value. The bell window
-  // stretches by the same factor.
+  // ── Crit roll (shared across all effects) ──────────────────────────────
   const critStat = isHeal ? 'heal_crit' : isMagic ? 'spell_crit' : 'crit_chance'
   const critChance = effStat(aStats, critStat, opts.attackerOv, attacker.abilities, opts.attackerAbilityOv)
   const critBonus = effStat(aStats, 'crit_damage', opts.attackerOv, attacker.abilities, opts.attackerAbilityOv) / 100
   const critRoll = opts.forceCrit ? 0 : Math.random() * 100
   const isCrit = opts.forceCrit || critRoll < critChance
-  const before5 = value
-  if (isCrit) {
-    const critFactor = 1 + critBonus
-    value = value * critFactor
-    scaleRange(critFactor)
+  steps.push({
+    title: `${++stepIdx}. Crit roll`,
+    inputs: (
+      <>
+        {critStat} = {fmt(critChance)}% · roll = {fmt(critRoll, 0)}
+        {isCrit && <> · crit damage = +{fmt(critBonus * 100)}%</>}
+      </>
+    ),
+    formula: isCrit ? (
+      <>roll &lt; chance → CRIT (each effect × {fmt(1 + critBonus, 2)})</>
+    ) : (
+      <>roll ≥ chance → no crit</>
+    ),
+    output: 0,
+    outputLabel: isCrit ? 'CRIT' : undefined,
+  })
+
+  // ── Damage roll setup (shared peak fraction) ───────────────────────────
+  const fetchedProf = proficiencyLevelFor(attacker, spell, skillsCatalog)
+  const effLevel = Math.max(
+    1,
+    opts.proficiencyOv !== undefined
+      ? opts.proficiencyOv
+      : fetchedProf?.level ?? Math.round(SPELL_PROFICIENCY_PEAK * MAX_SKILL_LEVEL),
+  )
+  const rawPeakFraction = Math.max(0, Math.min(1, effLevel / MAX_SKILL_LEVEL))
+  const peakFraction =
+    PEAK_FRACTION_MIN + (PEAK_FRACTION_MAX - PEAK_FRACTION_MIN) * rawPeakFraction
+
+  // ── Per-effect resolution (roll-FIRST: roll happens before stat ops) ───
+  // For each effect: base → damage roll (early) → crit → block → mit.
+  // This matches the spirit of roll-first mode (the bell carries variance,
+  // stats amplify what you rolled), now applied per effect.
+  let totalValue = 0
+  let totalRange: { min: number; mean: number; max: number } | null = null
+
+  for (const eff of calcEffects) {
+    const effIsHeal = eff.type === 'Heal'
+    const effIsMagic = effectIsMagic(eff)
+    const effPowerStat = effIsHeal
+      ? 'healing_power'
+      : effIsMagic
+        ? 'spell_power'
+        : 'attack_power'
+    const effPower = effStat(
+      aStats,
+      effPowerStat,
+      opts.attackerOv,
+      attacker.abilities,
+      opts.attackerAbilityOv,
+    )
+    const effCoef = eff.coefficient * opts.powerCoefficient
+    let value = effPower * effCoef
+    const effLabel = `Effect ${eff.index + 1}: ${eff.description}`
+
+    // Effect base
     steps.push({
-      title: `${++stepIdx}. Crit roll`,
+      title: `${++stepIdx}. ${effLabel} — base`,
       inputs: (
         <>
-          {critStat} = {fmt(critChance)}% · roll = {fmt(critRoll, 0)} · crit
-          damage = +{fmt(critBonus * 100)}%
+          {effPowerStat} = {fmt(effPower)} · effect coef ={' '}
+          {fmt(eff.coefficient, 2)} · global mult ={' '}
+          {fmt(opts.powerCoefficient, 2)} · school = {eff.school ?? '—'}
         </>
       ),
       formula: (
         <>
-          value = {fmt(before5)} × (1 + {fmt(critBonus)}) = {fmt(value)}
+          value = {fmt(effPower)} × {fmt(effCoef, 2)} = {fmt(value)}
         </>
       ),
       output: value,
-      outputLabel: 'CRIT',
-      range: range ?? undefined,
     })
-  } else {
+
+    // Damage roll (roll-first: happens before crit/mit)
+    let effRange: { min: number; mean: number; max: number } | null = null
+    if (!effIsHeal && value > 0) {
+      const a = 1
+      const b = Math.max(1, Math.ceil(value))
+      const { peak, sigma } = rollParams(a, b, peakFraction)
+      const x = rollDamage(a, b, peakFraction)
+      const sample = Math.max(1, Math.round(x))
+      const bellMin = Math.max(a, peak - ROLL_HALF_Z * sigma)
+      const bellMax = Math.min(b, peak + ROLL_HALF_Z * sigma)
+      effRange = { min: bellMin, mean: peak, max: bellMax }
+      steps.push({
+        title: `${++stepIdx}. ${effLabel} — damage roll`,
+        inputs: (
+          <>
+            peak fraction = {fmt(peakFraction, 2)} · σ = {fmt(sigma, 2)} ·
+            sampled x = {fmt(x, 2)}
+          </>
+        ),
+        formula: (
+          <>
+            round(clamp(N({fmt(peak, 1)}, σ={fmt(sigma, 2)}) → [{a}, {b}])) ={' '}
+            {sample}
+          </>
+        ),
+        output: sample,
+        range: effRange,
+      })
+      value = sample
+    }
+
+    // Crit applied (per effect, shared isCrit)
+    if (isCrit) {
+      const before = value
+      const critFactor = 1 + critBonus
+      value *= critFactor
+      if (effRange) {
+        effRange = {
+          min: effRange.min * critFactor,
+          mean: effRange.mean * critFactor,
+          max: effRange.max * critFactor,
+        }
+      }
+      steps.push({
+        title: `${++stepIdx}. ${effLabel} — crit applied`,
+        inputs: <>shared crit damage = +{fmt(critBonus * 100)}%</>,
+        formula: (
+          <>
+            {fmt(before)} × {fmt(critFactor, 2)} = {fmt(value)}
+          </>
+        ),
+        output: value,
+        range: effRange ?? undefined,
+      })
+    }
+
+    // Block applied (per damage effect, shared blocked)
+    if (blocked && !effIsHeal) {
+      const before = value
+      value *= BLOCK_MITIGATION
+      if (effRange) {
+        effRange = {
+          min: effRange.min * BLOCK_MITIGATION,
+          mean: effRange.mean * BLOCK_MITIGATION,
+          max: effRange.max * BLOCK_MITIGATION,
+        }
+      }
+      steps.push({
+        title: `${++stepIdx}. ${effLabel} — block applied`,
+        inputs: <>shared block · multiplier = {BLOCK_MITIGATION}</>,
+        formula: (
+          <>
+            {fmt(before)} × {BLOCK_MITIGATION} = {fmt(value)}
+          </>
+        ),
+        output: value,
+        range: effRange ?? undefined,
+      })
+    }
+
+    // Mitigation (per effect, routed by effect.school)
+    if (!effIsHeal) {
+      const mitStat = effIsMagic ? 'magic_resist' : 'armor'
+      const mitValue = effStat(
+        dStats,
+        mitStat,
+        opts.defenderOv,
+        defender.abilities,
+        opts.defenderAbilityOv,
+      )
+      const multiplier = MITIGATION_K / (MITIGATION_K + mitValue)
+      const before = value
+      value *= multiplier
+      if (effRange) {
+        effRange = {
+          min: effRange.min * multiplier,
+          mean: effRange.mean * multiplier,
+          max: effRange.max * multiplier,
+        }
+      }
+      steps.push({
+        title: `${++stepIdx}. ${effLabel} — ${effIsMagic ? 'magic resist' : 'armor'} mitigation`,
+        inputs: (
+          <>
+            defender.{mitStat} = {fmt(mitValue)} · K = {MITIGATION_K} ·
+            school = {eff.school}
+          </>
+        ),
+        formula: (
+          <>
+            mult = {fmt(multiplier, 3)} · {fmt(before)} × {fmt(multiplier, 3)}{' '}
+            = {fmt(value)}
+          </>
+        ),
+        output: value,
+        range: effRange ?? undefined,
+      })
+    }
+
+    totalValue += value
+    if (effRange) {
+      totalRange = totalRange
+        ? {
+            min: totalRange.min + effRange.min,
+            mean: totalRange.mean + effRange.mean,
+            max: totalRange.max + effRange.max,
+          }
+        : { ...effRange }
+    }
+  }
+
+  if (calcEffects.length > 1) {
     steps.push({
-      title: `${++stepIdx}. Crit roll`,
-      inputs: (
-        <>
-          {critStat} = {fmt(critChance)}% · roll = {fmt(critRoll, 0)}
-        </>
-      ),
-      formula: <>roll ≥ chance → no crit</>,
-      output: value,
-      range: range ?? undefined,
+      title: `${++stepIdx}. Total`,
+      inputs: <>sum across {calcEffects.length} effects</>,
+      formula: <>total = {fmt(totalValue)}</>,
+      output: Math.round(totalValue),
+      range: totalRange
+        ? {
+            min: Math.round(totalRange.min),
+            mean: Math.round(totalRange.mean),
+            max: Math.round(totalRange.max),
+          }
+        : undefined,
     })
   }
 
-  // Mitigation — multiplicative on the (rolled + scaled + maybe-crit)
-  // value. Bell window scales by the same factor. Heals skip this.
-  if (isHeal) {
-    steps.push({
-      title: `${++stepIdx}. Mitigation`,
-      inputs: <>heals are not mitigated</>,
-      formula: <>value unchanged</>,
-      output: value,
-      skipped: 'Heals skip mitigation',
-      range: range ?? undefined,
-    })
-  } else {
-    const mitStat = isMagic ? 'magic_resist' : 'armor'
-    const mitValue = effStat(dStats, mitStat, opts.defenderOv, defender.abilities, opts.defenderAbilityOv)
-    const multiplier = MITIGATION_K / (MITIGATION_K + mitValue)
-    const before6 = value
-    value = value * multiplier
-    scaleRange(multiplier)
-    steps.push({
-      title: `${++stepIdx}. ${isMagic ? 'Magic resist' : 'Armor'} mitigation`,
-      inputs: (
-        <>
-          defender.{mitStat} = {fmt(mitValue)} · K = {MITIGATION_K}
-        </>
-      ),
-      formula: (
-        <>
-          mult = K / (K + {mitStat}) = {fmt(multiplier, 3)} · value ={' '}
-          {fmt(before6)} × {fmt(multiplier, 3)} = {fmt(value)}
-        </>
-      ),
-      output: value,
-      range: range ?? undefined,
-    })
-  }
-
-  // Round the propagated bell window for the final display.
-  const finalRange = range
+  const finalRange = totalRange
     ? {
-        min: Math.max(0, Math.round(range.min)),
-        mean: Math.max(0, Math.round(range.mean)),
-        max: Math.max(0, Math.round(range.max)),
+        min: Math.max(0, Math.round(totalRange.min)),
+        mean: Math.max(0, Math.round(totalRange.mean)),
+        max: Math.max(0, Math.round(totalRange.max)),
       }
     : null
 
-  return appendFinal(steps, value, isHeal, finalRange)
+  return appendFinal(steps, totalValue, isHeal, finalRange)
 }
 
 // ─── Roll-LAST pipeline (OSRS-style: stats build up to a max, then roll) ────
@@ -1469,41 +1487,13 @@ function buildPipelineRollLast(
     !!spell.damage_school && spell.damage_school !== 'physical'
   const aStats = attacker.stats
   const dStats = defender.stats
-  // Base damage = ability flat baseline (usually 0 for percentage-scaled
-  // abilities post-migration 0064) + power × ability_coef × global_mult.
-  // This collapses the previous separate Base + Power-scaling steps —
-  // damage now flows from stats × coefficient as the source of truth.
-  const resolvedBase = resolveBaseDamage(spell)
-  const flatBase = opts.spellDamageOv ?? resolvedBase.base
-  const powerStat = isHeal ? 'healing_power' : isMagic ? 'spell_power' : 'attack_power'
-  const power = effStat(aStats, powerStat, opts.attackerOv, attacker.abilities, opts.attackerAbilityOv)
-  const abilityCoef = opts.spellPowerCoefOv ?? spell.power_coefficient
-  const effCoef = abilityCoef * opts.powerCoefficient
-  const baseDamage = flatBase + power * effCoef
-
-  let value = baseDamage
+  const calcEffects = normaliseEffects(spell)
   let stepIdx = 0
-  steps.push({
-    title: `${++stepIdx}. Base damage`,
-    inputs: (
-      <>
-        flat base = {fmt(flatBase)} · attacker.{powerStat} = {fmt(power)} ·
-        ability coef = {fmt(abilityCoef, 2)} · global mult ={' '}
-        {fmt(opts.powerCoefficient, 2)} · effective = {fmt(effCoef, 2)}
-      </>
-    ),
-    formula: (
-      <>
-        value = {fmt(flatBase)} + {fmt(power)} × {fmt(effCoef, 2)} ={' '}
-        {fmt(value)}
-      </>
-    ),
-    output: value,
-  })
 
-  // Attack outcome — one step per band so the user can read the
-  // resolution sequence (miss → dodge → parry → block → hit). All bands
-  // share the same roll value (single-roll attack table).
+  // ── Attack outcome (shared across all effects) ─────────────────────────
+  // The attack table runs once per cast. If it misses/dodges/parries,
+  // every effect short-circuits to 0; on BLOCK each effect's value gets
+  // multiplied by BLOCK_MITIGATION when that effect applies block.
   const resolution = resolveAttack({
     isMagic,
     hitChanceBonus: effStat(aStats, isMagic ? 'spell_hit' : 'hit_chance', opts.attackerOv, attacker.abilities, opts.attackerAbilityOv),
@@ -1512,12 +1502,13 @@ function buildPipelineRollLast(
     defenderBlock: effStat(dStats, 'block_chance', opts.defenderOv, defender.abilities, opts.defenderAbilityOv),
     forceHit: opts.forceHit,
   })
+  let blocked = false
   if (resolution.forced) {
     steps.push({
       title: `${++stepIdx}. Attack roll`,
       inputs: <>forced hit (toggle on)</>,
       formula: <>defensive bands skipped → continue</>,
-      output: value,
+      output: 0,
       outputLabel: 'HIT',
     })
   } else {
@@ -1537,29 +1528,26 @@ function buildPipelineRollLast(
         </>
       )
       if (isMine && (band.name === 'MISS' || band.name === 'DODGE' || band.name === 'PARRY')) {
-        value = 0
         steps.push({
           title: `${++stepIdx}. ${label} check`,
           inputs,
-          formula: <>roll lands in band → {label.toLowerCase()} (0 damage)</>,
+          formula: <>roll lands in band → {label.toLowerCase()} (0 damage, all effects)</>,
           output: 0,
           outputLabel: band.name,
         })
-        return appendFinal(steps, value, isHeal, null)
+        return appendFinal(steps, 0, isHeal, null)
       }
       if (isMine && band.name === 'BLOCK') {
-        const before = value
-        value *= BLOCK_MITIGATION
+        blocked = true
         steps.push({
           title: `${++stepIdx}. ${label} check`,
           inputs,
           formula: (
             <>
-              roll lands in band → blocked, value = {fmt(before)} ×{' '}
-              {BLOCK_MITIGATION} = {fmt(value)}
+              roll lands in band → blocked (each damage effect × {BLOCK_MITIGATION})
             </>
           ),
-          output: value,
+          output: 0,
           outputLabel: 'BLOCK',
         })
         resolved = true
@@ -1568,135 +1556,214 @@ function buildPipelineRollLast(
           title: `${++stepIdx}. ${label} check`,
           inputs,
           formula: <>roll outside band → continue</>,
-          output: value,
+          output: 0,
         })
       }
     }
   }
 
-  // Crit — multiplicative on the running max value.
+  // ── Crit roll (shared across all effects) ──────────────────────────────
+  // One shared crit roll per attack. If it crits, every Damage/Heal
+  // effect's value gets multiplied by (1 + crit_damage).
   const critStat = isHeal ? 'heal_crit' : isMagic ? 'spell_crit' : 'crit_chance'
   const critChance = effStat(aStats, critStat, opts.attackerOv, attacker.abilities, opts.attackerAbilityOv)
   const critBonus = effStat(aStats, 'crit_damage', opts.attackerOv, attacker.abilities, opts.attackerAbilityOv) / 100
   const critRoll = opts.forceCrit ? 0 : Math.random() * 100
   const isCrit = opts.forceCrit || critRoll < critChance
-  const before4 = value
-  if (isCrit) {
-    value = value * (1 + critBonus)
-    steps.push({
-      title: `${++stepIdx}. Crit roll`,
-      inputs: (
-        <>
-          {critStat} = {fmt(critChance)}% · roll = {fmt(critRoll, 0)} · crit
-          damage = +{fmt(critBonus * 100)}%
-        </>
-      ),
-      formula: (
-        <>
-          value = {fmt(before4)} × (1 + {fmt(critBonus)}) = {fmt(value)}
-        </>
-      ),
-      output: value,
-      outputLabel: 'CRIT',
-    })
-  } else {
-    steps.push({
-      title: `${++stepIdx}. Crit roll`,
-      inputs: (
-        <>
-          {critStat} = {fmt(critChance)}% · roll = {fmt(critRoll, 0)}
-        </>
-      ),
-      formula: <>roll ≥ chance → no crit</>,
-      output: value,
-    })
-  }
+  steps.push({
+    title: `${++stepIdx}. Crit roll`,
+    inputs: (
+      <>
+        {critStat} = {fmt(critChance)}% · roll = {fmt(critRoll, 0)}
+        {isCrit && <> · crit damage = +{fmt(critBonus * 100)}%</>}
+      </>
+    ),
+    formula: isCrit ? (
+      <>roll &lt; chance → CRIT (each effect × {fmt(1 + critBonus, 2)})</>
+    ) : (
+      <>roll ≥ chance → no crit</>
+    ),
+    output: 0,
+    outputLabel: isCrit ? 'CRIT' : undefined,
+  })
 
-  // Mitigation — multiplicative on the running max value.
-  if (isHeal) {
-    steps.push({
-      title: `${++stepIdx}. Mitigation`,
-      inputs: <>heals are not mitigated</>,
-      formula: <>value unchanged</>,
-      output: value,
-      skipped: 'Heals skip mitigation',
-    })
-  } else {
-    const mitStat = isMagic ? 'magic_resist' : 'armor'
-    const mitValue = effStat(dStats, mitStat, opts.defenderOv, defender.abilities, opts.defenderAbilityOv)
-    const multiplier = MITIGATION_K / (MITIGATION_K + mitValue)
-    const before5 = value
-    value = value * multiplier
-    steps.push({
-      title: `${++stepIdx}. ${isMagic ? 'Magic resist' : 'Armor'} mitigation`,
-      inputs: (
-        <>
-          defender.{mitStat} = {fmt(mitValue)} · K = {MITIGATION_K}
-        </>
-      ),
-      formula: (
-        <>
-          mult = K / (K + {mitStat}) = {fmt(multiplier, 3)} · value ={' '}
-          {fmt(before5)} × {fmt(multiplier, 3)} = {fmt(value)}
-        </>
-      ),
-      output: value,
-    })
-  }
+  // ── Damage roll setup (shared peak fraction, applied per effect) ───────
+  const fetchedProf = proficiencyLevelFor(attacker, spell, skillsCatalog)
+  const effLevel = Math.max(
+    1,
+    opts.proficiencyOv !== undefined
+      ? opts.proficiencyOv
+      : fetchedProf?.level ?? Math.round(SPELL_PROFICIENCY_PEAK * MAX_SKILL_LEVEL),
+  )
+  const rawPeakFraction = Math.max(0, Math.min(1, effLevel / MAX_SKILL_LEVEL))
+  const peakFraction =
+    PEAK_FRACTION_MIN + (PEAK_FRACTION_MAX - PEAK_FRACTION_MIN) * rawPeakFraction
 
-  // Damage roll — proficiency-driven Gaussian on [1, value] (the post-
-  // mitigation cap). The "weapon damage roll" earlier already injected
-  // weapon-range randomness; this bell adds the proficiency-driven curve
-  // on top. Heals skip — they stay deterministic.
-  let range: { min: number; mean: number; max: number } | null = null
-  if (!isHeal && value > 0) {
-    const fetchedProf = proficiencyLevelFor(attacker, spell, skillsCatalog)
-    const effLevel = Math.max(
-      1,
-      opts.proficiencyOv !== undefined
-        ? opts.proficiencyOv
-        : fetchedProf?.level ?? Math.round(SPELL_PROFICIENCY_PEAK * MAX_SKILL_LEVEL),
+  // ── Per-effect resolution ──────────────────────────────────────────────
+  // Each Damage/Heal effect runs its own sub-pipeline: base → crit →
+  // (block) → mitigation → damage roll. Heals skip block/mit/roll. All
+  // effect outputs are summed at the end.
+  let totalValue = 0
+  let totalRange: { min: number; mean: number; max: number } | null = null
+
+  for (const eff of calcEffects) {
+    const effIsHeal = eff.type === 'Heal'
+    const effIsMagic = effectIsMagic(eff)
+    const effPowerStat = effIsHeal
+      ? 'healing_power'
+      : effIsMagic
+        ? 'spell_power'
+        : 'attack_power'
+    const effPower = effStat(
+      aStats,
+      effPowerStat,
+      opts.attackerOv,
+      attacker.abilities,
+      opts.attackerAbilityOv,
     )
-    const rawPeakFraction = Math.max(0, Math.min(1, effLevel / MAX_SKILL_LEVEL))
-    const peakFraction =
-      PEAK_FRACTION_MIN + (PEAK_FRACTION_MAX - PEAK_FRACTION_MIN) * rawPeakFraction
-    const peakSource =
-      opts.proficiencyOv !== undefined
-        ? `override lv ${effLevel} / ${MAX_SKILL_LEVEL}`
-        : fetchedProf !== null
-          ? `${fetchedProf.skillName} lv ${effLevel} / ${MAX_SKILL_LEVEL}`
-          : `no weapon proficiency · default lv ${effLevel}`
-    const a = 1
-    const b = Math.max(1, Math.ceil(value))
-    const { peak, sigma } = rollParams(a, b, peakFraction)
-    const x = rollDamage(a, b, peakFraction)
-    const sample = Math.max(1, Math.round(x))
-    const bellMin = Math.max(a, Math.round(peak - ROLL_HALF_Z * sigma))
-    const bellMax = Math.min(b, Math.round(peak + ROLL_HALF_Z * sigma))
-    const mean = Math.max(1, Math.round(peak))
-    range = { min: bellMin, mean, max: bellMax }
+    const effCoef = eff.coefficient * opts.powerCoefficient
+    let value = effPower * effCoef
+    const effLabel = `Effect ${eff.index + 1}: ${eff.description}`
+
+    // Effect base
     steps.push({
-      title: `${++stepIdx}. Damage roll`,
+      title: `${++stepIdx}. ${effLabel} — base`,
       inputs: (
         <>
-          peak fraction = {fmt(peakFraction, 2)} (raw {fmt(rawPeakFraction, 2)}{' '}
-          → clamped to [{PEAK_FRACTION_MIN}, {PEAK_FRACTION_MAX}], {peakSource}){' '}
-          · σ = {fmt(sigma, 2)} · sampled x = {fmt(x, 2)}
+          {effPowerStat} = {fmt(effPower)} · effect coef ={' '}
+          {fmt(eff.coefficient, 2)} · global mult ={' '}
+          {fmt(opts.powerCoefficient, 2)} · school = {eff.school ?? '—'}
         </>
       ),
       formula: (
         <>
-          round(clamp(N({fmt(peak, 1)}, σ={fmt(sigma, 2)}) → [{a}, {b}])) ={' '}
-          {sample}
+          value = {fmt(effPower)} × {fmt(effCoef, 2)} = {fmt(value)}
         </>
       ),
-      output: sample,
-      range,
+      output: value,
     })
-    value = sample
+
+    // Crit applied (per effect, shared isCrit)
+    if (isCrit) {
+      const before = value
+      value *= 1 + critBonus
+      steps.push({
+        title: `${++stepIdx}. ${effLabel} — crit applied`,
+        inputs: <>shared crit damage = +{fmt(critBonus * 100)}%</>,
+        formula: (
+          <>
+            {fmt(before)} × {fmt(1 + critBonus, 2)} = {fmt(value)}
+          </>
+        ),
+        output: value,
+      })
+    }
+
+    // Block applied (per damage effect, when shared block triggered)
+    if (blocked && !effIsHeal) {
+      const before = value
+      value *= BLOCK_MITIGATION
+      steps.push({
+        title: `${++stepIdx}. ${effLabel} — block applied`,
+        inputs: <>shared block · multiplier = {BLOCK_MITIGATION}</>,
+        formula: (
+          <>
+            {fmt(before)} × {BLOCK_MITIGATION} = {fmt(value)}
+          </>
+        ),
+        output: value,
+      })
+    }
+
+    // Mitigation (per effect, routed by effect.school)
+    if (effIsHeal) {
+      // heals skip mitigation
+    } else {
+      const mitStat = effIsMagic ? 'magic_resist' : 'armor'
+      const mitValue = effStat(
+        dStats,
+        mitStat,
+        opts.defenderOv,
+        defender.abilities,
+        opts.defenderAbilityOv,
+      )
+      const multiplier = MITIGATION_K / (MITIGATION_K + mitValue)
+      const before = value
+      value *= multiplier
+      steps.push({
+        title: `${++stepIdx}. ${effLabel} — ${effIsMagic ? 'magic resist' : 'armor'} mitigation`,
+        inputs: (
+          <>
+            defender.{mitStat} = {fmt(mitValue)} · K = {MITIGATION_K} ·
+            school = {eff.school}
+          </>
+        ),
+        formula: (
+          <>
+            mult = K / (K + {mitStat}) = {fmt(multiplier, 3)} · value ={' '}
+            {fmt(before)} × {fmt(multiplier, 3)} = {fmt(value)}
+          </>
+        ),
+        output: value,
+      })
+    }
+
+    // Damage roll (per effect; heals stay deterministic)
+    let effRange: { min: number; mean: number; max: number } | null = null
+    if (!effIsHeal && value > 0) {
+      const a = 1
+      const b = Math.max(1, Math.ceil(value))
+      const { peak, sigma } = rollParams(a, b, peakFraction)
+      const x = rollDamage(a, b, peakFraction)
+      const sample = Math.max(1, Math.round(x))
+      const bellMin = Math.max(a, Math.round(peak - ROLL_HALF_Z * sigma))
+      const bellMax = Math.min(b, Math.round(peak + ROLL_HALF_Z * sigma))
+      effRange = { min: bellMin, mean: Math.round(peak), max: bellMax }
+      steps.push({
+        title: `${++stepIdx}. ${effLabel} — damage roll`,
+        inputs: (
+          <>
+            peak fraction = {fmt(peakFraction, 2)} · σ = {fmt(sigma, 2)} ·
+            sampled x = {fmt(x, 2)}
+          </>
+        ),
+        formula: (
+          <>
+            round(clamp(N({fmt(peak, 1)}, σ={fmt(sigma, 2)}) → [{a}, {b}])) ={' '}
+            {sample}
+          </>
+        ),
+        output: sample,
+        range: effRange,
+      })
+      value = sample
+    }
+
+    // Subtotal — merge into running total + range
+    totalValue += value
+    if (effRange) {
+      totalRange = totalRange
+        ? {
+            min: totalRange.min + effRange.min,
+            mean: totalRange.mean + effRange.mean,
+            max: totalRange.max + effRange.max,
+          }
+        : { ...effRange }
+    }
   }
 
-  return appendFinal(steps, value, isHeal, range)
+  // Sum step — only render when there's more than one effect.
+  if (calcEffects.length > 1) {
+    steps.push({
+      title: `${++stepIdx}. Total`,
+      inputs: <>sum across {calcEffects.length} effects</>,
+      formula: <>total = {fmt(totalValue)}</>,
+      output: Math.round(totalValue),
+      range: totalRange ?? undefined,
+    })
+  }
+
+  return appendFinal(steps, totalValue, isHeal, totalRange)
 }
 
 function appendFinal(
@@ -1730,8 +1797,6 @@ function Pipeline({
   defenderOv,
   attackerAbilityOv,
   defenderAbilityOv,
-  spellDamageOv,
-  spellPowerCoefOv,
   proficiencyOv,
   rollSeed,
   onReroll,
@@ -1750,8 +1815,6 @@ function Pipeline({
   defenderOv: StatOverrides
   attackerAbilityOv: StatOverrides
   defenderAbilityOv: StatOverrides
-  spellDamageOv: number | undefined
-  spellPowerCoefOv: number | undefined
   proficiencyOv: number | undefined
   rollSeed: number
   onReroll: () => void
@@ -1772,8 +1835,6 @@ function Pipeline({
         defenderOv,
         attackerAbilityOv,
         defenderAbilityOv,
-        spellDamageOv,
-        spellPowerCoefOv,
         proficiencyOv,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1781,7 +1842,7 @@ function Pipeline({
       attacker, defender, spell, skillsCatalog,
       forceCrit, forceHit, powerCoefficient, rollFirst,
       attackerOv, defenderOv, attackerAbilityOv, defenderAbilityOv,
-      spellDamageOv, spellPowerCoefOv, proficiencyOv,
+      proficiencyOv,
       rollSeed,
     ],
   )
@@ -1818,8 +1879,6 @@ function Pipeline({
         defenderOv,
         attackerAbilityOv,
         defenderAbilityOv,
-        spellDamageOv,
-        spellPowerCoefOv,
         proficiencyOv,
       })
       const final = s[s.length - 1].output
@@ -1903,7 +1962,7 @@ function Pipeline({
     attacker, defender, spell, skillsCatalog,
     forceCrit, forceHit, powerCoefficient, rollFirst,
     attackerOv, defenderOv, attackerAbilityOv, defenderAbilityOv,
-    spellDamageOv, spellPowerCoefOv, proficiencyOv,
+    proficiencyOv,
     nRolls, multiSeed,
   ])
 

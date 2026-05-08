@@ -1901,7 +1901,18 @@ function EffectMeta({ effect }: { effect: ActionEffect }) {
   if (typeof effect.type === 'string' && effect.type) {
     entries.push(['Type', effect.type])
   }
-  if (typeof effect.amount === 'number') {
+  // Percentage-scaling coefficient (preferred for Damage / Heal effects
+  // post-migration 0065). Shown as "150% power" rather than a raw number
+  // so it reads as a scaling factor, not a flat amount.
+  if (typeof effect.coefficient === 'number') {
+    entries.push(['Scaling', `${(effect.coefficient * 100).toFixed(0)}% power`])
+  }
+  // Flat amount — only shown when no coefficient is set (i.e. legacy or
+  // truly-flat effects like StatModifier buffs).
+  if (
+    typeof effect.amount === 'number' &&
+    typeof effect.coefficient !== 'number'
+  ) {
     const isPercent = effect.modifier_type === 'Percent'
     entries.push(['Amount', `${effect.amount}${isPercent ? '%' : ''}`])
   }
@@ -2402,7 +2413,6 @@ function ItemsSection() {
         expandedContent={(i) => {
           const rarity = rarityById.get(i.rarity)
           const subclass = subclassById.get(i.item_subclass)
-          const isWeapon = i.weapon_min_damage != null
           return (
             <dl className="data-expansion">
               <dt>ID</dt>
@@ -2423,17 +2433,9 @@ function ItemsSection() {
                   {rarity?.display_name ?? i.rarity}
                 </span>
               </dd>
-              {isWeapon && (
+              {i.weapon_speed != null && i.weapon_speed > 0 && (
                 <>
-                  <dt>Damage</dt>
-                  <dd>
-                    {i.weapon_min_damage}–{i.weapon_max_damage}
-                  </dd>
-                </>
-              )}
-              {isWeapon && i.weapon_speed != null && (
-                <>
-                  <dt>Speed</dt>
+                  <dt>Swing speed</dt>
                   <dd>{i.weapon_speed}s</dd>
                 </>
               )}
@@ -2512,8 +2514,10 @@ function ActionsSection() {
         <h2>Actions</h2>
         <p>
           Physical things characters do with weapons — strikes, blocks, shoves,
-          technique-based moves. Damage comes from the equipped weapon. Click a
-          row for details.
+          technique-based moves. Damage scales as a percentage of the
+          attacker's <strong>attack power</strong>; the per-action coefficient
+          (e.g. Slash = 100%, Smash = 200%) sizes how hard each one hits per
+          AP point. Click a row for details.
         </p>
       </header>
       <DataTable<Action>
@@ -2616,8 +2620,10 @@ function SpellsSection() {
       <header className="settings-section-header">
         <h2>Spells</h2>
         <p>
-          Magical effects — fire, frost, healing, summons, wards. Damage and
-          school are intrinsic to the spell. Click a row for details.
+          Magical effects — fire, frost, healing, summons, wards. Damage scales
+          as a percentage of the caster's <strong>spell power</strong> (or
+          healing power for heals); each spell's coefficient (e.g. Fireball =
+          200% SP) sizes how hard it hits. Click a row for details.
         </p>
       </header>
       <DataTable<Spell>
@@ -2641,15 +2647,6 @@ function SpellsSection() {
               <>
                 <dt>School</dt>
                 <dd>{s.damage_school}</dd>
-              </>
-            )}
-            {s.damage > 0 && (
-              <>
-                <dt>Damage</dt>
-                <dd>
-                  {s.damage}
-                  {s.is_heal ? ' (heal)' : ''}
-                </dd>
               </>
             )}
             {s.resource_cost > 0 && (

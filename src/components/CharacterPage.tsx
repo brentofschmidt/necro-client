@@ -541,8 +541,6 @@ function EquipmentSection({ characterId }: { characterId: string }) {
 }
 
 function EquipmentCard({ item }: { item: PublicCharacterEquipmentSlot }) {
-  const isWeapon =
-    item.weapon_min_damage != null && item.weapon_max_damage != null
   const titleColor = item.item_rarity ? RARITY_COLORS[item.item_rarity] : undefined
 
   return (
@@ -558,18 +556,11 @@ function EquipmentCard({ item }: { item: PublicCharacterEquipmentSlot }) {
         <p className="content-card-body">{item.description}</p>
       )}
 
-      {(isWeapon || item.weapon_speed != null) && (
+      {item.weapon_speed != null && item.weapon_speed > 0 && (
         <div className="content-card-stats">
-          {isWeapon && (
-            <span className="stat-pill">
-              {item.weapon_min_damage}–{item.weapon_max_damage} dmg
-            </span>
-          )}
-          {item.weapon_speed != null && item.weapon_speed > 0 && (
-            <span className="stat-pill stat-pill-muted">
-              Spd {item.weapon_speed}s
-            </span>
-          )}
+          <span className="stat-pill stat-pill-muted">
+            Spd {item.weapon_speed}s
+          </span>
         </div>
       )}
 

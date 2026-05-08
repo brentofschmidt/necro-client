@@ -96,8 +96,6 @@ export type PublicCharacterEquipmentSlot = {
   item_rarity: string | null
   item_subclass: string | null
   description: string | null
-  weapon_min_damage: number | null
-  weapon_max_damage: number | null
   weapon_speed: number | null
   ability_bonuses: AbilityBonus[]
   stats: ItemStatBonus[]
@@ -295,8 +293,6 @@ export type Item = {
   is_stackable: boolean
   max_stack_size: number
   weight: number
-  weapon_min_damage: number | null
-  weapon_max_damage: number | null
   weapon_speed: number | null
   ability_bonuses: AbilityBonus[]
   is_craftable: boolean
@@ -323,17 +319,13 @@ export type Action = {
   requires_target: boolean
   is_heal: boolean
   required_weapon_types: string[]
-  effects: ActionEffect[]
-  // Damage and damage_school live on both actions and spells as of
-  // migration 0062. Actions default to damage = 0, damage_school =
-  // 'physical' (NOT NULL); spells keep nullable damage_school for heals.
-  damage: number
+  // Damage / heal output is now fully effect-driven (migration 0066). Each
+  // entry in `effects` carries its own coefficient + school + target; the
+  // pipeline iterates them at attack time. The parent `damage_school` is
+  // kept for attack-table routing (melee 4-band vs spell-only) and as a
+  // default when an effect doesn't declare its own school.
   damage_school: string | null
-  // Per-ability scaling factor on the attacker's power stat — added in
-  // migration 0063. 0 = ability ignores power scaling; 1 = full 1:1 scaling
-  // with the appropriate power stat (attack/spell/healing). Defaults to 0
-  // for actions, 1 for spells.
-  power_coefficient: number
+  effects: ActionEffect[]
 }
 
 export type Spell = Action & {
@@ -696,7 +688,7 @@ export async function listItems(): Promise<Item[]> {
     .schema('necro_content')
     .from('items')
     .select(
-      'id, item_name, description, rarity, item_subclass, inventory_slot, required_skill_level, is_stackable, max_stack_size, weight, weapon_min_damage, weapon_max_damage, weapon_speed, ability_bonuses, is_craftable',
+      'id, item_name, description, rarity, item_subclass, inventory_slot, required_skill_level, is_stackable, max_stack_size, weight, weapon_speed, ability_bonuses, is_craftable',
     )
     .order('item_name', { ascending: true })
   if (error) {
@@ -764,7 +756,7 @@ export async function listInventorySlots(): Promise<InventorySlot[]> {
 }
 
 const ACTION_COLUMNS =
-  'asset_name, ability_name, description, type, targeting, resource_type, resource_cost, cooldown, cast_time, global_cooldown, range, requires_target, is_heal, required_weapon_types, effects, damage, damage_school, power_coefficient'
+  'asset_name, ability_name, description, type, targeting, resource_type, resource_cost, cooldown, cast_time, global_cooldown, range, requires_target, is_heal, required_weapon_types, effects, damage_school'
 
 export async function listActions(): Promise<Action[]> {
   const { data, error } = await supabase
