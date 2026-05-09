@@ -42,164 +42,57 @@ type SimpleCharacter = {
 }
 
 // Mitigation constant. Higher K means armor/resist matter less per point.
-// WoW historically used scaling-by-attacker-level constants; this is a flat
-// placeholder, easy to swap once the formula stabilises.
+// Hit-size-independent — same % reduction regardless of incoming damage.
+// Easy to swap once the formula stabilises.
 const MITIGATION_K = 100
 
-// Base miss chance the attacker has to overcome with hit_chance bonuses.
-// 10% gives hit_chance investment some meaningful headroom — a well-built
-// character chips it down toward MIN_MISS_CHANCE, but never to 0.
-const BASE_MISS_CHANCE = 10
+// Hit-chance formula constants (migration 0069). The pipeline runs ONE
+// avoid roll per group: hitChance = clamp(BASE_HIT + accuracy − evasion,
+// MIN_HIT, MAX_HIT). Symmetric for physical (accuracy / evasion) and
+// magical (spell_accuracy / spell_evasion). Linear in the delta so every
+// +1 stat moves hit chance by 1% — easy to mental-math at the table.
+const BASE_HIT = 90  // Naked-vs-naked baseline.
+const MAX_HIT  = 98  // "Always some chance to miss" residual.
+const MIN_HIT  =  5  // "Always some chance to hit" floor.
 
-// Floor on miss chance — even hit-capped characters miss this often. Keeps
-// "I never miss" from being a real outcome and preserves the variance the
-// combat log expects to surface occasionally.
-const MIN_MISS_CHANCE = 2
-
-// Damage multiplier applied on a successful BLOCK outcome. 0.5 = "blocked
-// for half" — block isn't a full evasion, it's a partial mitigation.
+// Damage multiplier applied on a successful BLOCK roll. 0.5 = "blocked
+// for half" — block is partial mitigation, not full evasion. Block now
+// fires as an INDEPENDENT roll alongside the avoid roll instead of
+// living in a band, so the effective block rate matches block_chance
+// directly (no overlap with miss / dodge eating into it).
 const BLOCK_MITIGATION = 0.5
 
-// Cap that level / MAX_SKILL_LEVEL is divided by to produce the damage-roll
-// peak position. Matches max_level on the seeded weapon proficiencies
-// (migration 0012).
+// Cap that level / MAX_SKILL_LEVEL is divided by to produce the damage-
+// roll floor fraction. Matches max_level on the seeded weapon
+// proficiencies (migration 0012).
 const MAX_SKILL_LEVEL = 99
 
-// Peak position used when no weapon proficiency applies — spells, generic
-// abilities. Range [0, 1]: the peak of the triangle distribution sits at
-// `value * SPELL_PROFICIENCY_PEAK` along the [0, value] roll range.
-//   0   = peak at 0 (untrained — low damage common, max rare)
-//   0.5 = peak in middle (symmetric bell)
-//   1.0 = peak at max (deterministic-feeling, max common, low rare)
-// Single knob so the design can shift without code changes.
-const SPELL_PROFICIENCY_PEAK = 0
+// At max proficiency, the uniform damage roll's lower bound is
+// `value × FLOOR_CAP`. So a level-99 master rolls uniform on [0.3·max,
+// max] (still swingy but never whiffs), while a level-1 novice rolls
+// uniform on [0, max] (pure RuneScape-flavoured swing). Tunable: 0.5
+// gives a tighter top-end (master rolls [0.5·max, max]); 0.0 collapses
+// the system back to "everyone is RS-untrained."
+const FLOOR_CAP = 0.3
 
-// The proficiency-driven peak fraction is mapped from prof 0..99 onto this
-// sub-range of [min, max]. With Beta sampling there's no clamping artefact
-// at the edges, so wide settings (e.g. [0, 1]) put the bell's mode flush
-// against the bound — most rolls land near min at prof 0 and near max at
-// prof 99. Tighten to e.g. [0.2, 0.8] if you want low-prof characters to
-// still occasionally roll mid-range.
-const PEAK_FRACTION_MIN = 0
-const PEAK_FRACTION_MAX = 1
-
-// Z-score the σ-fitting uses: 99% of a Gaussian's mass lies within ±Z·σ
-// of the mean. We pick σ so that Z·σ equals the distance from peak to the
-// CLOSER bound, which keeps clamping pile-up under ~0.5% per edge — i.e.
-// invisible in the histogram.
-const ROLL_HALF_Z = 2.576
-
-// Standard normal sample via Box-Muller. Used by rollDamage below.
-function gaussian01(): number {
-  const u1 = Math.max(Math.random(), 1e-10)
-  const u2 = Math.random()
-  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2)
-}
-
-// Damage roll on [min, max] from a single, symmetric Gaussian centered at
-// `peak = min + range × peakFraction`, with σ chosen to fit the NARROWER
-// side cleanly (Z·σ = distance from peak to the closer bound). This keeps
-// the bell visually symmetric on both sides of the peak and avoids any
-// pile-up spike at the bounds.
+// Damage roll on [value · profFloor, value], uniformly. Heals skip this
+// (deterministic). The min/mean/max returned here drives Step.range so
+// the renderer can show the rolled-window envelope alongside the sample.
 //
-// For peak=20 on [1, 100]:
-//   distToNearEdge = min(19, 80) = 19
-//   σ = 19 / 2.576 ≈ 7.4
-//   Bell extends from ~1 to ~39 — symmetric, clean, no pile-up
-//   But: doesn't reach 100 — far side of the range is unused at extreme peaks
-//
-// At peak=50 (mid):
-//   distToNearEdge = 49 → σ ≈ 19  → bell almost spans full [1, 100]
-//
-// Median = peak by construction (Gaussian's mean = median = mode = peak).
-// The accepted tradeoff vs the previous split-normal: at off-centre peaks
-// the bell occupies only the symmetric window around peak, not the whole
-// damage range.
-function rollParams(
-  min: number,
-  max: number,
-  peakFraction: number,
-): { peak: number; sigma: number } {
-  if (max <= min) return { peak: min, sigma: 0 }
-  const range = max - min
-  const p = Math.max(0, Math.min(1, peakFraction))
-  const peak = min + range * p
-  const distToNearEdge = Math.min(peak - min, max - peak)
-  // Floor prevents σ=0 at peak=min or peak=max where the near edge IS the
-  // peak. 2% of range stays below typical histogram bin width but keeps
-  // sampling well-defined.
-  const sigmaFloor = Math.max(0.5, range * 0.02)
-  const sigma = Math.max(distToNearEdge / ROLL_HALF_Z, sigmaFloor)
-  return { peak, sigma }
-}
-
-function rollDamage(min: number, max: number, peakFraction: number): number {
-  if (max <= min) return min
-  const { peak, sigma } = rollParams(min, max, peakFraction)
-  const sample = peak + gaussian01() * sigma
-  return Math.max(min, Math.min(max, sample))
-}
-
-// ─── Attack outcome resolver ───────────────────────────────────────────────
-// Single-roll attack table à la WoW. Cumulative probability bands resolved
-// in priority order: MISS → DODGE → PARRY → BLOCK → HIT. Whichever band the
-// roll lands in is the (only) outcome for that attack. This gives the log
-// distinct events ("dodged", "parried", "blocked") instead of collapsing
-// everything into a single "miss" bucket.
-//
-// Spells use a reduced table — only MISS or HIT — because dodge / parry /
-// block are physical-only responses. (We may add spell_hit / magic_resist
-// to the spell miss chance later; for now the bonus comes from hit_chance.)
-//
-// Block is a partial mitigation, not an evasion — on BLOCK the attack still
-// lands but its damage is multiplied by BLOCK_MITIGATION.
-type AttackOutcome = 'MISS' | 'DODGE' | 'PARRY' | 'BLOCK' | 'HIT'
-
-type AttackBand = { name: AttackOutcome; chance: number }
-
-type AttackResolution = {
-  outcome: AttackOutcome
-  roll: number
-  bands: AttackBand[]
-  forced: boolean
-}
-
-function resolveAttack(args: {
-  isMagic: boolean
-  hitChanceBonus: number
-  defenderDodge: number
-  defenderParry: number
-  defenderBlock: number
-  forceHit: boolean
-}): AttackResolution {
-  // Hit chance reduces miss but never below MIN_MISS_CHANCE — accounts
-  // for "always some chance to miss" the combat log wants to keep alive.
-  const missChance = Math.max(
-    MIN_MISS_CHANCE,
-    BASE_MISS_CHANCE - args.hitChanceBonus,
-  )
-  const bands: AttackBand[] = [{ name: 'MISS', chance: missChance }]
-  if (!args.isMagic) {
-    bands.push({ name: 'DODGE', chance: Math.max(0, args.defenderDodge) })
-    bands.push({ name: 'PARRY', chance: Math.max(0, args.defenderParry) })
-    bands.push({ name: 'BLOCK', chance: Math.max(0, args.defenderBlock) })
-  }
-  if (args.forceHit) {
-    return { outcome: 'HIT', roll: 0, bands, forced: true }
-  }
-  const roll = Math.random() * 100
-  let cumulative = 0
-  for (const band of bands) {
-    cumulative += band.chance
-    if (roll < cumulative) return { outcome: band.name, roll, bands, forced: false }
-  }
-  return { outcome: 'HIT', roll, bands, forced: false }
-}
-
-// Capitalises the first letter of a lowercased band name for display
-// ("miss" → "Miss"). Used by the attack-band step builder.
-function bandLabel(name: AttackOutcome): string {
-  return name.charAt(0) + name.slice(1).toLowerCase()
+// At profFloor = 0 the roll is uniform [0, value] — RuneScape-style: a
+// max-stat attacker still occasionally whiffs to 0. At profFloor = 0.3
+// the roll is uniform [0.3·value, value] — skill raises the floor, top
+// end stays just as swingy. Mean of a uniform is its midpoint, so
+// (min+max)/2 is what the histogram peak settles around.
+function rollDamageUniform(
+  value: number,
+  profFloor: number,
+): { sample: number; min: number; max: number; mean: number } {
+  if (value <= 0) return { sample: 0, min: 0, max: 0, mean: 0 }
+  const min = Math.max(0, value * profFloor)
+  const max = value
+  const sample = min + Math.random() * (max - min)
+  return { sample, min, max, mean: (min + max) / 2 }
 }
 
 // Persistence — saved choices survive tab switches and page reloads.
@@ -273,9 +166,7 @@ function statContributionsFromAbilities(a: {
   const dexBase = f((a.dexterity - 10) / 2)
   const intBase = f((a.intelligence - 10) / 2)
   const wisBase = f((a.wisdom - 10) / 2)
-  const strBase = f((a.strength - 10) / 2)
   const conBase = f((a.constitution - 10) / 2)
-  const chaBase = f((a.charisma - 10) / 2)
   return {
     attack_power: a.strength * 2,
     spell_power: a.intelligence * 2,
@@ -289,22 +180,25 @@ function statContributionsFromAbilities(a: {
     movement_speed: f(a.dexterity / 5),
     // Armor is equipment-only as of migration 0060 — no ability contribution.
     armor: 0,
-    dodge_chance: dexBase,
-    // Parry: timing + muscle (STR + DEX) — migration 0060.
-    parry_chance: strBase + dexBase,
-    block_chance: conBase, // shield-gated server-side; ignored here
+    // Defense stats — symmetric physical / magical pair (migration 0069).
+    // DEX drives physical evasion, WIS drives spell evasion. Block stays
+    // shield-gated server-side; ignored here for the calc tool.
+    evasion: dexBase,
+    spell_evasion: wisBase,
+    block_chance: conBase,
+    spell_block_chance: conBase,
     magic_resist: a.wisdom,
-    // Drivers updated in migration 0059 + 0060:
-    //   hit_chance = brawn + agility
-    //   spell_hit  = focus + attunement + force-of-will
-    // Keep these in sync with the SQL CASE arms in
-    // get_public_character_calculated_stats.
-    hit_chance: dexBase + strBase,
-    spell_hit: intBase + wisBase + chaBase,
+    // Precision stats — single-ability drivers, mod-scale magnitudes
+    // (migration 0069). The pipeline's hit formula is linear: hitChance =
+    // clamp(BASE_HIT + accuracy − evasion, MIN_HIT, MAX_HIT).
+    accuracy: dexBase,
+    spell_accuracy: intBase,
     mana_regen: f(a.wisdom / 4),
     health_regen: f(a.constitution / 5),
-    // versatility / mastery / expertise / life_steal removed in 0068 —
-    // they were WoW imports that didn't fit the more D&D-flavoured model.
+    // dodge_chance / parry_chance / hit_chance / spell_hit — dropped in
+    // 0069 (renamed / collapsed into the new symmetric pair). STR no
+    // longer contributes to physical accuracy; CHA no longer contributes
+    // to spell accuracy.
   }
 }
 
@@ -426,6 +320,33 @@ function normaliseEffects(ability: Action): CalcEffect[] {
 // of school.
 function effectIsMagic(effect: CalcEffect): boolean {
   return !!effect.school && effect.school !== 'physical'
+}
+
+// Splits an ability's calculable effects into groups keyed by `target`
+// ('Primary', 'SplashRadius', …). Each group is a separate damage / heal
+// resolution that lands on a *different* set of characters: only the
+// Primary group hits the picked defender; SplashRadius effects represent
+// damage to OTHER characters in the radius and are reported separately
+// rather than summed into the defender's hit. Primary is always returned
+// first so the pipeline resolves the defender's number before any
+// informational splash groups.
+type CalcEffectGroup = { target: string; effects: CalcEffect[] }
+function groupEffectsByTarget(effects: CalcEffect[]): CalcEffectGroup[] {
+  const buckets = new Map<string, CalcEffect[]>()
+  for (const eff of effects) {
+    const arr = buckets.get(eff.target) ?? []
+    arr.push(eff)
+    buckets.set(eff.target, arr)
+  }
+  const ordered: CalcEffectGroup[] = []
+  if (buckets.has('Primary')) {
+    ordered.push({ target: 'Primary', effects: buckets.get('Primary')! })
+    buckets.delete('Primary')
+  }
+  for (const [target, effs] of buckets) {
+    ordered.push({ target, effects: effs })
+  }
+  return ordered
 }
 
 // Resolves the attacker's weapon proficiency level for the action being used.
@@ -869,15 +790,16 @@ function EditableCharacterCard({
     ['Crit (%)', 'crit_chance'],
     ['Spell Crit (%)', 'spell_crit'],
     ['Crit Damage (%)', 'crit_damage'],
-    ['Hit (%)', 'hit_chance'],
-    ['Spell Hit (%)', 'spell_hit'],
+    ['Accuracy', 'accuracy'],
+    ['Spell Accuracy', 'spell_accuracy'],
   ]
   const defenceFields: [string, string][] = [
     ['Armor', 'armor'],
     ['Magic Resist', 'magic_resist'],
-    ['Dodge (%)', 'dodge_chance'],
-    ['Parry (%)', 'parry_chance'],
+    ['Evasion', 'evasion'],
+    ['Spell Evasion', 'spell_evasion'],
     ['Block (%)', 'block_chance'],
+    ['Spell Block (%)', 'spell_block_chance'],
   ]
   const fields = mode === 'offence' ? offenceFields : defenceFields
   const hasOverrides = Object.keys(overrides).length > 0
@@ -1076,10 +998,29 @@ function EditableSpellCard({
       value: power !== null ? power * effCoef : null,
     }
   })
-  const totalBase = effRows.reduce(
-    (sum, r) => sum + (r.value ?? 0),
-    0,
-  )
+  // Total bases bucketed by target so the card mirrors the pipeline's
+  // per-target subtotal — Primary effects hit the picked defender,
+  // SplashRadius effects hit other characters, and the calculator
+  // shouldn't pretend they sum into one number.
+  const baseByTarget = new Map<string, number>()
+  for (const r of effRows) {
+    if (r.value === null) continue
+    baseByTarget.set(r.eff.target, (baseByTarget.get(r.eff.target) ?? 0) + r.value)
+  }
+  const targetGroups = (() => {
+    const ordered: { target: string; value: number }[] = []
+    if (baseByTarget.has('Primary')) {
+      ordered.push({ target: 'Primary', value: baseByTarget.get('Primary')! })
+      baseByTarget.delete('Primary')
+    }
+    for (const [target, value] of baseByTarget) {
+      ordered.push({ target, value })
+    }
+    return ordered
+  })()
+  const showTotals =
+    attacker !== null &&
+    (targetGroups.length > 1 || (effRows.length > 1 && targetGroups.length >= 1))
   return (
     <>
       <div className="dmg-char-id">{spell.ability_name}</div>
@@ -1113,6 +1054,8 @@ function EditableSpellCard({
         <div className="dmg-effects">
           {effRows.map((r, i) => {
             const schoolKind = effectIsMagic(r.eff) ? 'magical' : 'physical'
+            const targetKind =
+              r.eff.target === 'Primary' ? 'primary' : 'splash'
             return (
               <div key={i} className="dmg-effect">
                 <div className="dmg-effect-head">
@@ -1128,6 +1071,9 @@ function EditableSpellCard({
                         {r.eff.school}
                       </span>
                     )}
+                    <span className={`dmg-effect-tag dmg-effect-tag-target-${targetKind}`}>
+                      → {r.eff.target}
+                    </span>
                   </span>
                 </div>
                 <dl className="dmg-effect-grid">
@@ -1168,12 +1114,25 @@ function EditableSpellCard({
               </div>
             )
           })}
-          {attacker && effRows.length > 1 && (
-            <div className="dmg-effect-total">
-              <span className="dmg-effect-total-label">Total base</span>
-              <span className="dmg-effect-total-value">{fmt(totalBase)}</span>
-            </div>
-          )}
+          {showTotals &&
+            targetGroups.map((g) => {
+              const isPrimary = g.target === 'Primary'
+              return (
+                <div
+                  key={g.target}
+                  className={`dmg-effect-total${
+                    isPrimary ? '' : ' dmg-effect-total-splash'
+                  }`}
+                >
+                  <span className="dmg-effect-total-label">
+                    {isPrimary
+                      ? 'Total base — Primary'
+                      : `Per-target base — ${g.target}`}
+                  </span>
+                  <span className="dmg-effect-total-value">{fmt(g.value)}</span>
+                </div>
+              )
+            })}
         </div>
       )}
     </>
@@ -1220,6 +1179,12 @@ type Step = {
   // Optional min/mean/max triple so the renderer can show the full damage
   // roll range alongside the sampled value (used by Damage roll + Final).
   range?: { min: number; mean: number; max: number }
+  // Target-group tag ('Primary', 'SplashRadius', …). Set on every step
+  // emitted inside a group's resolution so the multi-roll outcome counter
+  // can filter to the Primary group — splash-group MISS/CRIT labels live
+  // in the steps view but shouldn't pollute "did the cast hit / crit the
+  // picked defender" tallies above the histogram.
+  group?: string
 }
 
 type PipelineOpts = {
@@ -1249,104 +1214,164 @@ function buildPipeline(
     : buildPipelineRollLast(attacker, defender, spell, skillsCatalog, opts)
 }
 
-// ─── Roll-FIRST pipeline (variance lives in the weapon-base roll) ───────────
-function buildPipelineRollFirst(
-  attacker: SimpleCharacter,
-  defender: SimpleCharacter,
-  spell: Action,
-  skillsCatalog: Skill[] | null,
-  opts: PipelineOpts,
-): Step[] {
-  const steps: Step[] = []
-  const isHeal = spell.is_heal
-  // 'physical' is now an explicit damage_school (migration 0062) for
-  // weapon attacks, so plain truthiness no longer works — anything other
-  // than 'physical' (and not heal-style null) routes through the magical
-  // pipeline (spell_power scaling, magic_resist mitigation, spell_hit, …).
-  const isMagic =
-    !!spell.damage_school && spell.damage_school !== 'physical'
+// Pushes the attack-table steps for ONE target group. Two-roll model
+// (migration 0069):
+//
+//   1. Hit/Avoid roll — single d100 vs. the linear hit formula
+//        hitChance = clamp(BASE_HIT + accuracy − evasion, MIN_HIT, MAX_HIT)
+//      using accuracy/evasion for physical or spell_accuracy/spell_evasion
+//      for magical. On avoid: group ends at 0 damage. (Replaces the four
+//      bands MISS/DODGE/PARRY/BLOCK with one symmetric outcome.)
+//
+//   2. Block roll — independent d100 vs. block_chance (or
+//      spell_block_chance). On block: damage will be halved later. Heals
+//      ignore the block flag downstream. Block is its own roll now, so
+//      its effective rate matches block_chance directly (no overlap
+//      eating into it like the old band model).
+//
+// The defender stands in as the sample target for non-primary groups
+// (the calc only knows one defender). The `titleSuffix` is appended to
+// step titles when there's more than one group so the user can scan
+// which roll belongs to which target.
+function pushAttackTableForGroup(
+  steps: Step[],
+  stepIdx: number,
+  ctx: {
+    groupTarget: string
+    titleSuffix: string
+    groupIsMagic: boolean
+    attacker: SimpleCharacter
+    defender: SimpleCharacter
+    opts: PipelineOpts
+  },
+): { stepIdx: number; missed: boolean; blocked: boolean } {
+  const { groupTarget, titleSuffix, groupIsMagic, attacker, defender, opts } = ctx
   const aStats = attacker.stats
   const dStats = defender.stats
-  const calcEffects = normaliseEffects(spell)
-  let stepIdx = 0
 
-  // ── Attack outcome (shared across all effects) ─────────────────────────
-  const resolution = resolveAttack({
-    isMagic,
-    hitChanceBonus: effStat(aStats, isMagic ? 'spell_hit' : 'hit_chance', opts.attackerOv, attacker.abilities, opts.attackerAbilityOv),
-    defenderDodge: effStat(dStats, 'dodge_chance', opts.defenderOv, defender.abilities, opts.defenderAbilityOv),
-    defenderParry: effStat(dStats, 'parry_chance', opts.defenderOv, defender.abilities, opts.defenderAbilityOv),
-    defenderBlock: effStat(dStats, 'block_chance', opts.defenderOv, defender.abilities, opts.defenderAbilityOv),
-    forceHit: opts.forceHit,
-  })
-  let blocked = false
-  if (resolution.forced) {
+  // ── 1. Hit/Avoid roll ──────────────────────────────────────────────────
+  const accuracyStat = groupIsMagic ? 'spell_accuracy' : 'accuracy'
+  const evasionStat = groupIsMagic ? 'spell_evasion' : 'evasion'
+  const accuracy = effStat(
+    aStats,
+    accuracyStat,
+    opts.attackerOv,
+    attacker.abilities,
+    opts.attackerAbilityOv,
+  )
+  const evasion = effStat(
+    dStats,
+    evasionStat,
+    opts.defenderOv,
+    defender.abilities,
+    opts.defenderAbilityOv,
+  )
+  const hitChance = Math.max(
+    MIN_HIT,
+    Math.min(MAX_HIT, BASE_HIT + accuracy - evasion),
+  )
+  const hitRoll = opts.forceHit ? 0 : Math.random() * 100
+  const hit = opts.forceHit || hitRoll < hitChance
+  if (opts.forceHit) {
     steps.push({
-      title: `${++stepIdx}. Attack roll`,
+      title: `${++stepIdx}. Hit roll${titleSuffix}`,
       inputs: <>forced hit (toggle on)</>,
-      formula: <>defensive bands skipped → continue</>,
+      formula: <>avoid roll skipped → HIT</>,
       output: 0,
       outputLabel: 'HIT',
+      group: groupTarget,
     })
   } else {
-    let cum = 0
-    let resolved = false
-    for (const band of resolution.bands) {
-      const lo = cum
-      const hi = cum + band.chance
-      cum = hi
-      if (resolved) break
-      const isMine = resolution.outcome === band.name
-      const label = bandLabel(band.name)
-      const inputs = (
+    steps.push({
+      title: `${++stepIdx}. Hit roll${titleSuffix}`,
+      inputs: (
         <>
-          chance = {fmt(band.chance, 1)}% · roll = {fmt(resolution.roll, 1)} ·
-          band [{fmt(lo, 1)}–{fmt(hi, 1)})
+          {accuracyStat} = {fmt(accuracy)} · {evasionStat} = {fmt(evasion)} ·
+          roll = {fmt(hitRoll, 1)}
         </>
-      )
-      if (isMine && (band.name === 'MISS' || band.name === 'DODGE' || band.name === 'PARRY')) {
-        steps.push({
-          title: `${++stepIdx}. ${label} check`,
-          inputs,
-          formula: <>roll lands in band → {label.toLowerCase()} (0 damage, all effects)</>,
-          output: 0,
-          outputLabel: band.name,
-        })
-        return appendFinal(steps, 0, isHeal, null)
-      }
-      if (isMine && band.name === 'BLOCK') {
-        blocked = true
-        steps.push({
-          title: `${++stepIdx}. ${label} check`,
-          inputs,
-          formula: (
+      ),
+      formula: (
+        <>
+          hitChance = clamp({BASE_HIT} + {fmt(accuracy)} − {fmt(evasion)},{' '}
+          {MIN_HIT}, {MAX_HIT}) = {fmt(hitChance, 1)}% ·{' '}
+          {hit ? (
+            <>roll &lt; chance → HIT</>
+          ) : (
             <>
-              roll lands in band → blocked (each damage effect × {BLOCK_MITIGATION})
+              roll ≥ chance → AVOID (0 damage to {groupTarget} target)
             </>
-          ),
-          output: 0,
-          outputLabel: 'BLOCK',
-        })
-        resolved = true
-      } else {
-        steps.push({
-          title: `${++stepIdx}. ${label} check`,
-          inputs,
-          formula: <>roll outside band → continue</>,
-          output: 0,
-        })
-      }
-    }
+          )}
+        </>
+      ),
+      output: 0,
+      outputLabel: hit ? 'HIT' : 'MISS',
+      group: groupTarget,
+    })
+  }
+  if (!hit) {
+    return { stepIdx, missed: true, blocked: false }
   }
 
-  // ── Crit roll (shared across all effects) ──────────────────────────────
-  const critStat = isHeal ? 'heal_crit' : isMagic ? 'spell_crit' : 'crit_chance'
+  // ── 2. Block roll (independent) ────────────────────────────────────────
+  const blockStat = groupIsMagic ? 'spell_block_chance' : 'block_chance'
+  const blockChance = Math.max(
+    0,
+    effStat(
+      dStats,
+      blockStat,
+      opts.defenderOv,
+      defender.abilities,
+      opts.defenderAbilityOv,
+    ),
+  )
+  const blockRoll = Math.random() * 100
+  const blocked = blockRoll < blockChance
+  steps.push({
+    title: `${++stepIdx}. Block roll${titleSuffix}`,
+    inputs: (
+      <>
+        {blockStat} = {fmt(blockChance)}% · roll = {fmt(blockRoll, 1)}
+      </>
+    ),
+    formula: blocked ? (
+      <>
+        roll &lt; chance → BLOCK (each damage effect × {BLOCK_MITIGATION})
+      </>
+    ) : (
+      <>roll ≥ chance → no block</>
+    ),
+    output: 0,
+    outputLabel: blocked ? 'BLOCK' : undefined,
+    group: groupTarget,
+  })
+  return { stepIdx, missed: false, blocked }
+}
+
+// Pushes the crit-roll step for ONE target group. Each group rolls its
+// own d100 against the relevant crit stat (heal_crit / spell_crit /
+// crit_chance — picked from the group's first effect). Crit lands per-
+// hit-per-target rather than once per cast, matching the PoE convention.
+function pushCritRollForGroup(
+  steps: Step[],
+  stepIdx: number,
+  ctx: {
+    groupTarget: string
+    titleSuffix: string
+    groupIsHeal: boolean
+    groupIsMagic: boolean
+    attacker: SimpleCharacter
+    opts: PipelineOpts
+  },
+): { stepIdx: number; isCrit: boolean; critBonus: number } {
+  const { groupTarget, titleSuffix, groupIsHeal, groupIsMagic, attacker, opts } = ctx
+  const aStats = attacker.stats
+  const critStat = groupIsHeal ? 'heal_crit' : groupIsMagic ? 'spell_crit' : 'crit_chance'
   const critChance = effStat(aStats, critStat, opts.attackerOv, attacker.abilities, opts.attackerAbilityOv)
   const critBonus = effStat(aStats, 'crit_damage', opts.attackerOv, attacker.abilities, opts.attackerAbilityOv) / 100
   const critRoll = opts.forceCrit ? 0 : Math.random() * 100
   const isCrit = opts.forceCrit || critRoll < critChance
   steps.push({
-    title: `${++stepIdx}. Crit roll`,
+    title: `${++stepIdx}. Crit roll${titleSuffix}`,
     inputs: (
       <>
         {critStat} = {fmt(critChance)}% · roll = {fmt(critRoll, 0)}
@@ -1360,220 +1385,348 @@ function buildPipelineRollFirst(
     ),
     output: 0,
     outputLabel: isCrit ? 'CRIT' : undefined,
+    group: groupTarget,
   })
+  return { stepIdx, isCrit, critBonus }
+}
 
-  // ── Damage roll setup (shared peak fraction) ───────────────────────────
+// ─── Roll-FIRST pipeline (variance lives in the weapon-base roll) ───────────
+function buildPipelineRollFirst(
+  attacker: SimpleCharacter,
+  defender: SimpleCharacter,
+  spell: Action,
+  skillsCatalog: Skill[] | null,
+  opts: PipelineOpts,
+): Step[] {
+  const steps: Step[] = []
+  const isHeal = spell.is_heal
+  const aStats = attacker.stats
+  const dStats = defender.stats
+  const calcEffects = normaliseEffects(spell)
+  let stepIdx = 0
+
+  // ── Damage roll setup (uniform window with skill floor) ────────────────
+  // Uniform [value · profFloor, value] (migration 0069). At level 1
+  // profFloor = 0 → uniform [0, value] (RuneScape-flavoured pure swing).
+  // At level 99 profFloor = FLOOR_CAP (0.3) → uniform [0.3·value, value]
+  // (still swingy, never whiffs). Spells with no weapon proficiency
+  // default to level 0 floor, matching "no skill = max swing."
   const fetchedProf = proficiencyLevelFor(attacker, spell, skillsCatalog)
   const effLevel = Math.max(
-    1,
+    0,
     opts.proficiencyOv !== undefined
       ? opts.proficiencyOv
-      : fetchedProf?.level ?? Math.round(SPELL_PROFICIENCY_PEAK * MAX_SKILL_LEVEL),
+      : fetchedProf?.level ?? 0,
   )
-  const rawPeakFraction = Math.max(0, Math.min(1, effLevel / MAX_SKILL_LEVEL))
-  const peakFraction =
-    PEAK_FRACTION_MIN + (PEAK_FRACTION_MAX - PEAK_FRACTION_MIN) * rawPeakFraction
+  const profFloor =
+    Math.max(0, Math.min(1, effLevel / MAX_SKILL_LEVEL)) * FLOOR_CAP
 
-  // ── Per-effect resolution (roll-FIRST: roll happens before stat ops) ───
-  // For each effect: base → damage roll (early) → crit → block → mit.
-  // This matches the spirit of roll-first mode (the bell carries variance,
-  // stats amplify what you rolled), now applied per effect.
-  let totalValue = 0
-  let totalRange: { min: number; mean: number; max: number } | null = null
+  // ── Per-group resolution ────────────────────────────────────────────────
+  // Effects are grouped by target ('Primary', 'SplashRadius', …) and each
+  // group runs the FULL pipeline: its own attack-table check, its own
+  // crit roll, then per-effect base → damage roll → crit applied → block
+  // applied → mitigation. Only the Primary group's resolved total flows
+  // into the defender's HP. Splash-group rolls treat the picked defender
+  // as the sample target — the calc only knows one defender — and are
+  // shown as informational (not subtracted from the defender's HP).
+  const groups = groupEffectsByTarget(calcEffects)
+  const renderSubtotals =
+    groups.length > 1 || (groups[0]?.effects.length ?? 0) > 1
+  const useTitleSuffix = groups.length > 1
+  let primaryValue = 0
+  let primaryRange: { min: number; mean: number; max: number } | null = null
 
-  for (const eff of calcEffects) {
-    const effIsHeal = eff.type === 'Heal'
-    const effIsMagic = effectIsMagic(eff)
-    const effPowerStat = effIsHeal
-      ? 'healing_power'
-      : effIsMagic
-        ? 'spell_power'
-        : 'attack_power'
-    const effPower = effStat(
-      aStats,
-      effPowerStat,
-      opts.attackerOv,
-      attacker.abilities,
-      opts.attackerAbilityOv,
-    )
-    const effCoef = eff.coefficient * opts.powerCoefficient
-    let value = effPower * effCoef
-    const effLabel = `Effect ${eff.index + 1}: ${eff.description}`
+  for (const group of groups) {
+    const isPrimaryGroup = group.target === 'Primary'
+    const titleSuffix = useTitleSuffix ? ` — ${group.target}` : ''
+    // Group-level routing comes from the FIRST effect: a uniform-school
+    // group resolves naturally; a hypothetical mixed group falls back on
+    // the lead effect for hit/crit-stat selection. The seed data has no
+    // mixed-school groups today, so this stays predictable.
+    const groupFirst = group.effects[0]
+    const groupIsHeal = groupFirst ? groupFirst.type === 'Heal' : isHeal
+    const groupIsMagic = groupFirst ? effectIsMagic(groupFirst) : false
 
-    // Effect base
-    steps.push({
-      title: `${++stepIdx}. ${effLabel} — base`,
-      inputs: (
-        <>
-          {effPowerStat} = {fmt(effPower)} · effect coef ={' '}
-          {fmt(eff.coefficient, 2)} · global mult ={' '}
-          {fmt(opts.powerCoefficient, 2)} · school = {eff.school ?? '—'}
-        </>
-      ),
-      formula: (
-        <>
-          value = {fmt(effPower)} × {fmt(effCoef, 2)} = {fmt(value)}
-        </>
-      ),
-      output: value,
+    // Attack-table for THIS group.
+    const attackResult = pushAttackTableForGroup(steps, stepIdx, {
+      groupTarget: group.target,
+      titleSuffix,
+      groupIsMagic,
+      attacker,
+      defender,
+      opts,
     })
+    stepIdx = attackResult.stepIdx
+    const blocked = attackResult.blocked
+    const groupMissed = attackResult.missed
 
-    // Damage roll (roll-first: happens before crit/mit)
-    let effRange: { min: number; mean: number; max: number } | null = null
-    if (!effIsHeal && value > 0) {
-      const a = 1
-      const b = Math.max(1, Math.ceil(value))
-      const { peak, sigma } = rollParams(a, b, peakFraction)
-      const x = rollDamage(a, b, peakFraction)
-      const sample = Math.max(1, Math.round(x))
-      const bellMin = Math.max(a, peak - ROLL_HALF_Z * sigma)
-      const bellMax = Math.min(b, peak + ROLL_HALF_Z * sigma)
-      effRange = { min: bellMin, mean: peak, max: bellMax }
-      steps.push({
-        title: `${++stepIdx}. ${effLabel} — damage roll`,
-        inputs: (
-          <>
-            peak fraction = {fmt(peakFraction, 2)} · σ = {fmt(sigma, 2)} ·
-            sampled x = {fmt(x, 2)}
-          </>
-        ),
-        formula: (
-          <>
-            round(clamp(N({fmt(peak, 1)}, σ={fmt(sigma, 2)}) → [{a}, {b}])) ={' '}
-            {sample}
-          </>
-        ),
-        output: sample,
-        range: effRange,
-      })
-      value = sample
-    }
-
-    // Crit applied (per effect, shared isCrit)
-    if (isCrit) {
-      const before = value
-      const critFactor = 1 + critBonus
-      value *= critFactor
-      if (effRange) {
-        effRange = {
-          min: effRange.min * critFactor,
-          mean: effRange.mean * critFactor,
-          max: effRange.max * critFactor,
-        }
+    // Group missed → 0 damage to this group's target. Skip crit + per-
+    // effect resolution and emit a zero subtotal so the running tally
+    // stays legible. Continue to the next group (a primary miss doesn't
+    // stop splash from rolling against the splash sample target).
+    if (groupMissed) {
+      if (renderSubtotals) {
+        steps.push({
+          title: `${++stepIdx}. Subtotal — ${group.target}${
+            isPrimaryGroup ? '' : ' (other targets)'
+          }`,
+          inputs: (
+            <>
+              attack missed → 0 damage to {group.target} target
+            </>
+          ),
+          formula: (
+            <>
+              {group.target} = 0
+            </>
+          ),
+          output: 0,
+          group: group.target,
+        })
       }
-      steps.push({
-        title: `${++stepIdx}. ${effLabel} — crit applied`,
-        inputs: <>shared crit damage = +{fmt(critBonus * 100)}%</>,
-        formula: (
-          <>
-            {fmt(before)} × {fmt(critFactor, 2)} = {fmt(value)}
-          </>
-        ),
-        output: value,
-        range: effRange ?? undefined,
-      })
-    }
-
-    // Block applied (per damage effect, shared blocked)
-    if (blocked && !effIsHeal) {
-      const before = value
-      value *= BLOCK_MITIGATION
-      if (effRange) {
-        effRange = {
-          min: effRange.min * BLOCK_MITIGATION,
-          mean: effRange.mean * BLOCK_MITIGATION,
-          max: effRange.max * BLOCK_MITIGATION,
-        }
+      if (isPrimaryGroup) {
+        primaryValue = 0
+        primaryRange = null
       }
-      steps.push({
-        title: `${++stepIdx}. ${effLabel} — block applied`,
-        inputs: <>shared block · multiplier = {BLOCK_MITIGATION}</>,
-        formula: (
-          <>
-            {fmt(before)} × {BLOCK_MITIGATION} = {fmt(value)}
-          </>
-        ),
-        output: value,
-        range: effRange ?? undefined,
-      })
+      continue
     }
 
-    // Mitigation (per effect, routed by effect.school)
-    if (!effIsHeal) {
-      const mitStat = effIsMagic ? 'magic_resist' : 'armor'
-      const mitValue = effStat(
-        dStats,
-        mitStat,
-        opts.defenderOv,
-        defender.abilities,
-        opts.defenderAbilityOv,
+    // Crit roll for THIS group.
+    const critResult = pushCritRollForGroup(steps, stepIdx, {
+      groupTarget: group.target,
+      titleSuffix,
+      groupIsHeal,
+      groupIsMagic,
+      attacker,
+      opts,
+    })
+    stepIdx = critResult.stepIdx
+    const isCrit = critResult.isCrit
+    const critBonus = critResult.critBonus
+
+    let groupValue = 0
+    let groupRange: { min: number; mean: number; max: number } | null = null
+
+    for (const eff of group.effects) {
+      const effIsHeal = eff.type === 'Heal'
+      const effIsMagic = effectIsMagic(eff)
+      const effPowerStat = effIsHeal
+        ? 'healing_power'
+        : effIsMagic
+          ? 'spell_power'
+          : 'attack_power'
+      const effPower = effStat(
+        aStats,
+        effPowerStat,
+        opts.attackerOv,
+        attacker.abilities,
+        opts.attackerAbilityOv,
       )
-      const multiplier = MITIGATION_K / (MITIGATION_K + mitValue)
-      const before = value
-      value *= multiplier
-      if (effRange) {
-        effRange = {
-          min: effRange.min * multiplier,
-          mean: effRange.mean * multiplier,
-          max: effRange.max * multiplier,
-        }
-      }
+      const effCoef = eff.coefficient * opts.powerCoefficient
+      let value = effPower * effCoef
+      const effLabel = `Effect ${eff.index + 1}: ${eff.description}`
+
+      // Effect base
       steps.push({
-        title: `${++stepIdx}. ${effLabel} — ${effIsMagic ? 'magic resist' : 'armor'} mitigation`,
+        title: `${++stepIdx}. ${effLabel} — base`,
         inputs: (
           <>
-            defender.{mitStat} = {fmt(mitValue)} · K = {MITIGATION_K} ·
-            school = {eff.school}
+            {effPowerStat} = {fmt(effPower)} · effect coef ={' '}
+            {fmt(eff.coefficient, 2)} · global mult ={' '}
+            {fmt(opts.powerCoefficient, 2)} · school = {eff.school ?? '—'}
           </>
         ),
         formula: (
           <>
-            mult = {fmt(multiplier, 3)} · {fmt(before)} × {fmt(multiplier, 3)}{' '}
-            = {fmt(value)}
+            value = {fmt(effPower)} × {fmt(effCoef, 2)} = {fmt(value)}
           </>
         ),
         output: value,
-        range: effRange ?? undefined,
+        group: group.target,
+      })
+
+      // Damage roll (roll-first: happens before crit/mit). Uniform
+      // [value · profFloor, value] — RuneScape-flavoured swing tightened
+      // by proficiency. The Step.range carries the sampled window so the
+      // renderer can show "rolled X out of [min..max]".
+      let effRange: { min: number; mean: number; max: number } | null = null
+      if (!effIsHeal && value > 0) {
+        const roll = rollDamageUniform(value, profFloor)
+        const sample = Math.max(0, Math.round(roll.sample))
+        effRange = { min: roll.min, mean: roll.mean, max: roll.max }
+        steps.push({
+          title: `${++stepIdx}. ${effLabel} — damage roll`,
+          inputs: (
+            <>
+              uniform [{fmt(roll.min, 1)}, {fmt(roll.max, 1)}] · floor ={' '}
+              {fmt(profFloor, 2)} · sampled x = {fmt(roll.sample, 2)}
+            </>
+          ),
+          formula: (
+            <>
+              round(uniform({fmt(roll.min, 1)}, {fmt(roll.max, 1)})) = {sample}
+            </>
+          ),
+          output: sample,
+          range: effRange,
+          group: group.target,
+        })
+        value = sample
+      }
+
+      // Crit applied (uses THIS group's isCrit)
+      if (isCrit) {
+        const before = value
+        const critFactor = 1 + critBonus
+        value *= critFactor
+        if (effRange) {
+          effRange = {
+            min: effRange.min * critFactor,
+            mean: effRange.mean * critFactor,
+            max: effRange.max * critFactor,
+          }
+        }
+        steps.push({
+          title: `${++stepIdx}. ${effLabel} — crit applied`,
+          inputs: <>group crit damage = +{fmt(critBonus * 100)}%</>,
+          formula: (
+            <>
+              {fmt(before)} × {fmt(critFactor, 2)} = {fmt(value)}
+            </>
+          ),
+          output: value,
+          range: effRange ?? undefined,
+          group: group.target,
+        })
+      }
+
+      // Block applied (uses THIS group's blocked flag)
+      if (blocked && !effIsHeal) {
+        const before = value
+        value *= BLOCK_MITIGATION
+        if (effRange) {
+          effRange = {
+            min: effRange.min * BLOCK_MITIGATION,
+            mean: effRange.mean * BLOCK_MITIGATION,
+            max: effRange.max * BLOCK_MITIGATION,
+          }
+        }
+        steps.push({
+          title: `${++stepIdx}. ${effLabel} — block applied`,
+          inputs: <>group block · multiplier = {BLOCK_MITIGATION}</>,
+          formula: (
+            <>
+              {fmt(before)} × {BLOCK_MITIGATION} = {fmt(value)}
+            </>
+          ),
+          output: value,
+          range: effRange ?? undefined,
+          group: group.target,
+        })
+      }
+
+      // Mitigation (per effect, routed by effect.school)
+      if (!effIsHeal) {
+        const mitStat = effIsMagic ? 'magic_resist' : 'armor'
+        const mitValue = effStat(
+          dStats,
+          mitStat,
+          opts.defenderOv,
+          defender.abilities,
+          opts.defenderAbilityOv,
+        )
+        const multiplier = MITIGATION_K / (MITIGATION_K + mitValue)
+        const before = value
+        value *= multiplier
+        if (effRange) {
+          effRange = {
+            min: effRange.min * multiplier,
+            mean: effRange.mean * multiplier,
+            max: effRange.max * multiplier,
+          }
+        }
+        steps.push({
+          title: `${++stepIdx}. ${effLabel} — ${effIsMagic ? 'magic resist' : 'armor'} mitigation`,
+          inputs: (
+            <>
+              defender.{mitStat} = {fmt(mitValue)} · K = {MITIGATION_K} ·
+              school = {eff.school}
+            </>
+          ),
+          formula: (
+            <>
+              mult = {fmt(multiplier, 3)} · {fmt(before)} × {fmt(multiplier, 3)}{' '}
+              = {fmt(value)}
+            </>
+          ),
+          output: value,
+          range: effRange ?? undefined,
+          group: group.target,
+        })
+      }
+
+      groupValue += value
+      if (effRange) {
+        groupRange = groupRange
+          ? {
+              min: groupRange.min + effRange.min,
+              mean: groupRange.mean + effRange.mean,
+              max: groupRange.max + effRange.max,
+            }
+          : { ...effRange }
+      }
+    }
+
+    // Per-group subtotal — emitted whenever there's more than one effect
+    // total in the ability (so multi-effect abilities and split-target
+    // abilities both get a labelled rollup). Single-effect single-target
+    // abilities skip this and let the Final step carry the only number.
+    if (renderSubtotals) {
+      steps.push({
+        title: `${++stepIdx}. Subtotal — ${group.target}${
+          isPrimaryGroup ? '' : ' (other targets)'
+        }`,
+        inputs: (
+          <>
+            sum across {group.effects.length} effect
+            {group.effects.length === 1 ? '' : 's'} ·{' '}
+            {isPrimaryGroup
+              ? 'applied to defender'
+              : 'NOT applied to picked defender — separate target(s)'}
+          </>
+        ),
+        formula: (
+          <>
+            {group.target} = {fmt(groupValue)}
+          </>
+        ),
+        output: Math.round(groupValue),
+        range: groupRange
+          ? {
+              min: Math.round(groupRange.min),
+              mean: Math.round(groupRange.mean),
+              max: Math.round(groupRange.max),
+            }
+          : undefined,
+        group: group.target,
       })
     }
 
-    totalValue += value
-    if (effRange) {
-      totalRange = totalRange
-        ? {
-            min: totalRange.min + effRange.min,
-            mean: totalRange.mean + effRange.mean,
-            max: totalRange.max + effRange.max,
-          }
-        : { ...effRange }
+    if (isPrimaryGroup) {
+      primaryValue = groupValue
+      primaryRange = groupRange
     }
   }
 
-  if (calcEffects.length > 1) {
-    steps.push({
-      title: `${++stepIdx}. Total`,
-      inputs: <>sum across {calcEffects.length} effects</>,
-      formula: <>total = {fmt(totalValue)}</>,
-      output: Math.round(totalValue),
-      range: totalRange
-        ? {
-            min: Math.round(totalRange.min),
-            mean: Math.round(totalRange.mean),
-            max: Math.round(totalRange.max),
-          }
-        : undefined,
-    })
-  }
-
-  const finalRange = totalRange
+  const finalRange = primaryRange
     ? {
-        min: Math.max(0, Math.round(totalRange.min)),
-        mean: Math.max(0, Math.round(totalRange.mean)),
-        max: Math.max(0, Math.round(totalRange.max)),
+        min: Math.max(0, Math.round(primaryRange.min)),
+        mean: Math.max(0, Math.round(primaryRange.mean)),
+        max: Math.max(0, Math.round(primaryRange.max)),
       }
     : null
 
-  return appendFinal(steps, totalValue, isHeal, finalRange)
+  return appendFinal(steps, primaryValue, isHeal, finalRange)
 }
 
 // ─── Roll-LAST pipeline (OSRS-style: stats build up to a max, then roll) ────
@@ -1586,291 +1739,289 @@ function buildPipelineRollLast(
 ): Step[] {
   const steps: Step[] = []
   const isHeal = spell.is_heal
-  // 'physical' is now an explicit damage_school (migration 0062) for
-  // weapon attacks, so plain truthiness no longer works — anything other
-  // than 'physical' (and not heal-style null) routes through the magical
-  // pipeline (spell_power scaling, magic_resist mitigation, spell_hit, …).
-  const isMagic =
-    !!spell.damage_school && spell.damage_school !== 'physical'
   const aStats = attacker.stats
   const dStats = defender.stats
   const calcEffects = normaliseEffects(spell)
   let stepIdx = 0
 
-  // ── Attack outcome (shared across all effects) ─────────────────────────
-  // The attack table runs once per cast. If it misses/dodges/parries,
-  // every effect short-circuits to 0; on BLOCK each effect's value gets
-  // multiplied by BLOCK_MITIGATION when that effect applies block.
-  const resolution = resolveAttack({
-    isMagic,
-    hitChanceBonus: effStat(aStats, isMagic ? 'spell_hit' : 'hit_chance', opts.attackerOv, attacker.abilities, opts.attackerAbilityOv),
-    defenderDodge: effStat(dStats, 'dodge_chance', opts.defenderOv, defender.abilities, opts.defenderAbilityOv),
-    defenderParry: effStat(dStats, 'parry_chance', opts.defenderOv, defender.abilities, opts.defenderAbilityOv),
-    defenderBlock: effStat(dStats, 'block_chance', opts.defenderOv, defender.abilities, opts.defenderAbilityOv),
-    forceHit: opts.forceHit,
-  })
-  let blocked = false
-  if (resolution.forced) {
-    steps.push({
-      title: `${++stepIdx}. Attack roll`,
-      inputs: <>forced hit (toggle on)</>,
-      formula: <>defensive bands skipped → continue</>,
-      output: 0,
-      outputLabel: 'HIT',
+  // ── Damage roll setup (uniform window with skill floor) ────────────────
+  // Uniform [value · profFloor, value] (migration 0069). Same setup as
+  // roll-FIRST mode; the difference between modes is when the roll fires
+  // in the per-effect chain, not how the window is computed.
+  const fetchedProf = proficiencyLevelFor(attacker, spell, skillsCatalog)
+  const effLevel = Math.max(
+    0,
+    opts.proficiencyOv !== undefined
+      ? opts.proficiencyOv
+      : fetchedProf?.level ?? 0,
+  )
+  const profFloor =
+    Math.max(0, Math.min(1, effLevel / MAX_SKILL_LEVEL)) * FLOOR_CAP
+
+  // ── Per-group resolution ────────────────────────────────────────────────
+  // Each target group ('Primary', 'SplashRadius', …) runs the FULL
+  // pipeline: its own attack-table check, its own crit roll, then per-
+  // effect base → crit applied → block applied → mitigation → damage
+  // roll. Only the Primary group's resolved total flows into the
+  // defender's HP. Splash-group rolls treat the picked defender as the
+  // sample target and are shown as informational (not subtracted).
+  const groups = groupEffectsByTarget(calcEffects)
+  const renderSubtotals =
+    groups.length > 1 || (groups[0]?.effects.length ?? 0) > 1
+  const useTitleSuffix = groups.length > 1
+  let primaryValue = 0
+  let primaryRange: { min: number; mean: number; max: number } | null = null
+
+  for (const group of groups) {
+    const isPrimaryGroup = group.target === 'Primary'
+    const titleSuffix = useTitleSuffix ? ` — ${group.target}` : ''
+    const groupFirst = group.effects[0]
+    const groupIsHeal = groupFirst ? groupFirst.type === 'Heal' : isHeal
+    const groupIsMagic = groupFirst ? effectIsMagic(groupFirst) : false
+
+    // Attack-table for THIS group.
+    const attackResult = pushAttackTableForGroup(steps, stepIdx, {
+      groupTarget: group.target,
+      titleSuffix,
+      groupIsMagic,
+      attacker,
+      defender,
+      opts,
     })
-  } else {
-    let cum = 0
-    let resolved = false
-    for (const band of resolution.bands) {
-      const lo = cum
-      const hi = cum + band.chance
-      cum = hi
-      if (resolved) break
-      const isMine = resolution.outcome === band.name
-      const label = bandLabel(band.name)
-      const inputs = (
-        <>
-          chance = {fmt(band.chance, 1)}% · roll = {fmt(resolution.roll, 1)} ·
-          band [{fmt(lo, 1)}–{fmt(hi, 1)})
-        </>
-      )
-      if (isMine && (band.name === 'MISS' || band.name === 'DODGE' || band.name === 'PARRY')) {
+    stepIdx = attackResult.stepIdx
+    const blocked = attackResult.blocked
+    const groupMissed = attackResult.missed
+
+    if (groupMissed) {
+      if (renderSubtotals) {
         steps.push({
-          title: `${++stepIdx}. ${label} check`,
-          inputs,
-          formula: <>roll lands in band → {label.toLowerCase()} (0 damage, all effects)</>,
-          output: 0,
-          outputLabel: band.name,
-        })
-        return appendFinal(steps, 0, isHeal, null)
-      }
-      if (isMine && band.name === 'BLOCK') {
-        blocked = true
-        steps.push({
-          title: `${++stepIdx}. ${label} check`,
-          inputs,
+          title: `${++stepIdx}. Subtotal — ${group.target}${
+            isPrimaryGroup ? '' : ' (other targets)'
+          }`,
+          inputs: (
+            <>
+              attack missed → 0 damage to {group.target} target
+            </>
+          ),
           formula: (
             <>
-              roll lands in band → blocked (each damage effect × {BLOCK_MITIGATION})
+              {group.target} = 0
             </>
           ),
           output: 0,
-          outputLabel: 'BLOCK',
-        })
-        resolved = true
-      } else {
-        steps.push({
-          title: `${++stepIdx}. ${label} check`,
-          inputs,
-          formula: <>roll outside band → continue</>,
-          output: 0,
+          group: group.target,
         })
       }
+      if (isPrimaryGroup) {
+        primaryValue = 0
+        primaryRange = null
+      }
+      continue
     }
-  }
 
-  // ── Crit roll (shared across all effects) ──────────────────────────────
-  // One shared crit roll per attack. If it crits, every Damage/Heal
-  // effect's value gets multiplied by (1 + crit_damage).
-  const critStat = isHeal ? 'heal_crit' : isMagic ? 'spell_crit' : 'crit_chance'
-  const critChance = effStat(aStats, critStat, opts.attackerOv, attacker.abilities, opts.attackerAbilityOv)
-  const critBonus = effStat(aStats, 'crit_damage', opts.attackerOv, attacker.abilities, opts.attackerAbilityOv) / 100
-  const critRoll = opts.forceCrit ? 0 : Math.random() * 100
-  const isCrit = opts.forceCrit || critRoll < critChance
-  steps.push({
-    title: `${++stepIdx}. Crit roll`,
-    inputs: (
-      <>
-        {critStat} = {fmt(critChance)}% · roll = {fmt(critRoll, 0)}
-        {isCrit && <> · crit damage = +{fmt(critBonus * 100)}%</>}
-      </>
-    ),
-    formula: isCrit ? (
-      <>roll &lt; chance → CRIT (each effect × {fmt(1 + critBonus, 2)})</>
-    ) : (
-      <>roll ≥ chance → no crit</>
-    ),
-    output: 0,
-    outputLabel: isCrit ? 'CRIT' : undefined,
-  })
-
-  // ── Damage roll setup (shared peak fraction, applied per effect) ───────
-  const fetchedProf = proficiencyLevelFor(attacker, spell, skillsCatalog)
-  const effLevel = Math.max(
-    1,
-    opts.proficiencyOv !== undefined
-      ? opts.proficiencyOv
-      : fetchedProf?.level ?? Math.round(SPELL_PROFICIENCY_PEAK * MAX_SKILL_LEVEL),
-  )
-  const rawPeakFraction = Math.max(0, Math.min(1, effLevel / MAX_SKILL_LEVEL))
-  const peakFraction =
-    PEAK_FRACTION_MIN + (PEAK_FRACTION_MAX - PEAK_FRACTION_MIN) * rawPeakFraction
-
-  // ── Per-effect resolution ──────────────────────────────────────────────
-  // Each Damage/Heal effect runs its own sub-pipeline: base → crit →
-  // (block) → mitigation → damage roll. Heals skip block/mit/roll. All
-  // effect outputs are summed at the end.
-  let totalValue = 0
-  let totalRange: { min: number; mean: number; max: number } | null = null
-
-  for (const eff of calcEffects) {
-    const effIsHeal = eff.type === 'Heal'
-    const effIsMagic = effectIsMagic(eff)
-    const effPowerStat = effIsHeal
-      ? 'healing_power'
-      : effIsMagic
-        ? 'spell_power'
-        : 'attack_power'
-    const effPower = effStat(
-      aStats,
-      effPowerStat,
-      opts.attackerOv,
-      attacker.abilities,
-      opts.attackerAbilityOv,
-    )
-    const effCoef = eff.coefficient * opts.powerCoefficient
-    let value = effPower * effCoef
-    const effLabel = `Effect ${eff.index + 1}: ${eff.description}`
-
-    // Effect base
-    steps.push({
-      title: `${++stepIdx}. ${effLabel} — base`,
-      inputs: (
-        <>
-          {effPowerStat} = {fmt(effPower)} · effect coef ={' '}
-          {fmt(eff.coefficient, 2)} · global mult ={' '}
-          {fmt(opts.powerCoefficient, 2)} · school = {eff.school ?? '—'}
-        </>
-      ),
-      formula: (
-        <>
-          value = {fmt(effPower)} × {fmt(effCoef, 2)} = {fmt(value)}
-        </>
-      ),
-      output: value,
+    // Crit roll for THIS group.
+    const critResult = pushCritRollForGroup(steps, stepIdx, {
+      groupTarget: group.target,
+      titleSuffix,
+      groupIsHeal,
+      groupIsMagic,
+      attacker,
+      opts,
     })
+    stepIdx = critResult.stepIdx
+    const isCrit = critResult.isCrit
+    const critBonus = critResult.critBonus
 
-    // Crit applied (per effect, shared isCrit)
-    if (isCrit) {
-      const before = value
-      value *= 1 + critBonus
-      steps.push({
-        title: `${++stepIdx}. ${effLabel} — crit applied`,
-        inputs: <>shared crit damage = +{fmt(critBonus * 100)}%</>,
-        formula: (
-          <>
-            {fmt(before)} × {fmt(1 + critBonus, 2)} = {fmt(value)}
-          </>
-        ),
-        output: value,
-      })
-    }
+    let groupValue = 0
+    let groupRange: { min: number; mean: number; max: number } | null = null
 
-    // Block applied (per damage effect, when shared block triggered)
-    if (blocked && !effIsHeal) {
-      const before = value
-      value *= BLOCK_MITIGATION
-      steps.push({
-        title: `${++stepIdx}. ${effLabel} — block applied`,
-        inputs: <>shared block · multiplier = {BLOCK_MITIGATION}</>,
-        formula: (
-          <>
-            {fmt(before)} × {BLOCK_MITIGATION} = {fmt(value)}
-          </>
-        ),
-        output: value,
-      })
-    }
-
-    // Mitigation (per effect, routed by effect.school)
-    if (effIsHeal) {
-      // heals skip mitigation
-    } else {
-      const mitStat = effIsMagic ? 'magic_resist' : 'armor'
-      const mitValue = effStat(
-        dStats,
-        mitStat,
-        opts.defenderOv,
-        defender.abilities,
-        opts.defenderAbilityOv,
+    for (const eff of group.effects) {
+      const effIsHeal = eff.type === 'Heal'
+      const effIsMagic = effectIsMagic(eff)
+      const effPowerStat = effIsHeal
+        ? 'healing_power'
+        : effIsMagic
+          ? 'spell_power'
+          : 'attack_power'
+      const effPower = effStat(
+        aStats,
+        effPowerStat,
+        opts.attackerOv,
+        attacker.abilities,
+        opts.attackerAbilityOv,
       )
-      const multiplier = MITIGATION_K / (MITIGATION_K + mitValue)
-      const before = value
-      value *= multiplier
+      const effCoef = eff.coefficient * opts.powerCoefficient
+      let value = effPower * effCoef
+      const effLabel = `Effect ${eff.index + 1}: ${eff.description}`
+
+      // Effect base
       steps.push({
-        title: `${++stepIdx}. ${effLabel} — ${effIsMagic ? 'magic resist' : 'armor'} mitigation`,
+        title: `${++stepIdx}. ${effLabel} — base`,
         inputs: (
           <>
-            defender.{mitStat} = {fmt(mitValue)} · K = {MITIGATION_K} ·
-            school = {eff.school}
+            {effPowerStat} = {fmt(effPower)} · effect coef ={' '}
+            {fmt(eff.coefficient, 2)} · global mult ={' '}
+            {fmt(opts.powerCoefficient, 2)} · school = {eff.school ?? '—'}
           </>
         ),
         formula: (
           <>
-            mult = K / (K + {mitStat}) = {fmt(multiplier, 3)} · value ={' '}
-            {fmt(before)} × {fmt(multiplier, 3)} = {fmt(value)}
+            value = {fmt(effPower)} × {fmt(effCoef, 2)} = {fmt(value)}
           </>
         ),
         output: value,
+        group: group.target,
       })
+
+      // Crit applied (uses THIS group's isCrit)
+      if (isCrit) {
+        const before = value
+        value *= 1 + critBonus
+        steps.push({
+          title: `${++stepIdx}. ${effLabel} — crit applied`,
+          inputs: <>group crit damage = +{fmt(critBonus * 100)}%</>,
+          formula: (
+            <>
+              {fmt(before)} × {fmt(1 + critBonus, 2)} = {fmt(value)}
+            </>
+          ),
+          output: value,
+          group: group.target,
+        })
+      }
+
+      // Block applied (uses THIS group's blocked flag)
+      if (blocked && !effIsHeal) {
+        const before = value
+        value *= BLOCK_MITIGATION
+        steps.push({
+          title: `${++stepIdx}. ${effLabel} — block applied`,
+          inputs: <>group block · multiplier = {BLOCK_MITIGATION}</>,
+          formula: (
+            <>
+              {fmt(before)} × {BLOCK_MITIGATION} = {fmt(value)}
+            </>
+          ),
+          output: value,
+          group: group.target,
+        })
+      }
+
+      // Mitigation (per effect, routed by effect.school)
+      if (effIsHeal) {
+        // heals skip mitigation
+      } else {
+        const mitStat = effIsMagic ? 'magic_resist' : 'armor'
+        const mitValue = effStat(
+          dStats,
+          mitStat,
+          opts.defenderOv,
+          defender.abilities,
+          opts.defenderAbilityOv,
+        )
+        const multiplier = MITIGATION_K / (MITIGATION_K + mitValue)
+        const before = value
+        value *= multiplier
+        steps.push({
+          title: `${++stepIdx}. ${effLabel} — ${effIsMagic ? 'magic resist' : 'armor'} mitigation`,
+          inputs: (
+            <>
+              defender.{mitStat} = {fmt(mitValue)} · K = {MITIGATION_K} ·
+              school = {eff.school}
+            </>
+          ),
+          formula: (
+            <>
+              mult = K / (K + {mitStat}) = {fmt(multiplier, 3)} · value ={' '}
+              {fmt(before)} × {fmt(multiplier, 3)} = {fmt(value)}
+            </>
+          ),
+          output: value,
+          group: group.target,
+        })
+      }
+
+      // Damage roll (per effect; heals stay deterministic). Uniform
+      // [value · profFloor, value] — same RuneScape-flavoured swing as
+      // roll-FIRST mode, just applied AFTER stat ops in this pipeline.
+      let effRange: { min: number; mean: number; max: number } | null = null
+      if (!effIsHeal && value > 0) {
+        const roll = rollDamageUniform(value, profFloor)
+        const sample = Math.max(0, Math.round(roll.sample))
+        effRange = {
+          min: Math.round(roll.min),
+          mean: Math.round(roll.mean),
+          max: Math.round(roll.max),
+        }
+        steps.push({
+          title: `${++stepIdx}. ${effLabel} — damage roll`,
+          inputs: (
+            <>
+              uniform [{fmt(roll.min, 1)}, {fmt(roll.max, 1)}] · floor ={' '}
+              {fmt(profFloor, 2)} · sampled x = {fmt(roll.sample, 2)}
+            </>
+          ),
+          formula: (
+            <>
+              round(uniform({fmt(roll.min, 1)}, {fmt(roll.max, 1)})) = {sample}
+            </>
+          ),
+          output: sample,
+          range: effRange,
+          group: group.target,
+        })
+        value = sample
+      }
+
+      // Subtotal — merge into running group total + range
+      groupValue += value
+      if (effRange) {
+        groupRange = groupRange
+          ? {
+              min: groupRange.min + effRange.min,
+              mean: groupRange.mean + effRange.mean,
+              max: groupRange.max + effRange.max,
+            }
+          : { ...effRange }
+      }
     }
 
-    // Damage roll (per effect; heals stay deterministic)
-    let effRange: { min: number; mean: number; max: number } | null = null
-    if (!effIsHeal && value > 0) {
-      const a = 1
-      const b = Math.max(1, Math.ceil(value))
-      const { peak, sigma } = rollParams(a, b, peakFraction)
-      const x = rollDamage(a, b, peakFraction)
-      const sample = Math.max(1, Math.round(x))
-      const bellMin = Math.max(a, Math.round(peak - ROLL_HALF_Z * sigma))
-      const bellMax = Math.min(b, Math.round(peak + ROLL_HALF_Z * sigma))
-      effRange = { min: bellMin, mean: Math.round(peak), max: bellMax }
+    // Per-group subtotal — emitted whenever the ability has more than one
+    // effect total OR splits across multiple targets, so each target gets
+    // a labelled rollup. Single-effect single-target abilities skip this
+    // and let the Final step carry the only number.
+    if (renderSubtotals) {
       steps.push({
-        title: `${++stepIdx}. ${effLabel} — damage roll`,
+        title: `${++stepIdx}. Subtotal — ${group.target}${
+          isPrimaryGroup ? '' : ' (other targets)'
+        }`,
         inputs: (
           <>
-            peak fraction = {fmt(peakFraction, 2)} · σ = {fmt(sigma, 2)} ·
-            sampled x = {fmt(x, 2)}
+            sum across {group.effects.length} effect
+            {group.effects.length === 1 ? '' : 's'} ·{' '}
+            {isPrimaryGroup
+              ? 'applied to defender'
+              : 'NOT applied to picked defender — separate target(s)'}
           </>
         ),
         formula: (
           <>
-            round(clamp(N({fmt(peak, 1)}, σ={fmt(sigma, 2)}) → [{a}, {b}])) ={' '}
-            {sample}
+            {group.target} = {fmt(groupValue)}
           </>
         ),
-        output: sample,
-        range: effRange,
+        output: Math.round(groupValue),
+        range: groupRange ?? undefined,
+        group: group.target,
       })
-      value = sample
     }
 
-    // Subtotal — merge into running total + range
-    totalValue += value
-    if (effRange) {
-      totalRange = totalRange
-        ? {
-            min: totalRange.min + effRange.min,
-            mean: totalRange.mean + effRange.mean,
-            max: totalRange.max + effRange.max,
-          }
-        : { ...effRange }
+    if (isPrimaryGroup) {
+      primaryValue = groupValue
+      primaryRange = groupRange
     }
   }
 
-  // Sum step — only render when there's more than one effect.
-  if (calcEffects.length > 1) {
-    steps.push({
-      title: `${++stepIdx}. Total`,
-      inputs: <>sum across {calcEffects.length} effects</>,
-      formula: <>total = {fmt(totalValue)}</>,
-      output: Math.round(totalValue),
-      range: totalRange ?? undefined,
-    })
-  }
-
-  return appendFinal(steps, totalValue, isHeal, totalRange)
+  return appendFinal(steps, primaryValue, isHeal, primaryRange)
 }
 
 function appendFinal(
@@ -1995,13 +2146,15 @@ function Pipeline({
       total += final
       freq.set(final, (freq.get(final) ?? 0) + 1)
 
-      // Tally the defensive outcome by scanning step labels. The pipeline
-      // emits at most one of MISS/DODGE/PARRY/BLOCK; absence of any of
-      // those means the attack landed cleanly (HIT). CRIT is independent
-      // (sub-outcome of hit/block) and tracked separately.
+      // Tally the defensive outcome by scanning step labels — but only
+      // the Primary group's, since splash groups roll against other
+      // characters and their MISS/CRIT shouldn't pollute "did the cast
+      // hit / crit the defender" tallies. Steps without a `group` field
+      // (e.g. the final step) are ignored here.
       let landed: 'miss' | 'dodge' | 'parry' | 'block' | 'hit' = 'hit'
       let didCrit = false
       for (const step of s) {
+        if (step.group !== 'Primary') continue
         if (step.outputLabel === 'MISS') landed = 'miss'
         else if (step.outputLabel === 'DODGE') landed = 'dodge'
         else if (step.outputLabel === 'PARRY') landed = 'parry'
