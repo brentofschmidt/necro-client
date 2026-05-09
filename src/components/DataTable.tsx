@@ -26,6 +26,15 @@ import { Link } from 'react-router-dom'
 //                                                    showing detail content.
 //                                                    rowHref is ignored when
 //                                                    expansion is enabled.
+//            isExpandable: (row) => boolean         — optional per-row gate.
+//                                                    Rows where this returns
+//                                                    false skip the chevron
+//                                                    and the click handler;
+//                                                    the chevron column is
+//                                                    still reserved so other
+//                                                    rows align. Useful for
+//                                                    tables where some rows
+//                                                    have no detail to show.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type DataTableColumn<T> = {
@@ -54,6 +63,7 @@ export type DataTableProps<T> = {
   noResultsText?: string
   defaultSort?: DataTableSort
   expandedContent?: (row: T) => ReactNode
+  isExpandable?: (row: T) => boolean
 }
 
 function SearchIcon() {
@@ -133,6 +143,7 @@ export function DataTable<T>({
   noResultsText = 'No matches.',
   defaultSort,
   expandedContent,
+  isExpandable,
 }: DataTableProps<T>) {
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState<DataTableSort | undefined>(defaultSort)
@@ -263,21 +274,23 @@ export function DataTable<T>({
           <tbody>
             {sortedAndFiltered.map((row) => {
               const key = rowKey(row)
-              const expanded = useExpand && expandedKeys.has(key)
+              const rowExpandable = useExpand && (isExpandable?.(row) ?? true)
+              const expanded = rowExpandable && expandedKeys.has(key)
               return (
                 <Fragment key={key}>
                   <tr
                     className={
                       'data-row' +
-                      (useExpand ? ' data-row-expandable' : '') +
-                      (expanded ? ' data-row-expanded' : '')
+                      (rowExpandable ? ' data-row-expandable' : '') +
+                      (expanded ? ' data-row-expanded' : '') +
+                      (useExpand && !rowExpandable ? ' data-row-inert' : '')
                     }
-                    onClick={useExpand ? () => toggleExpanded(key) : undefined}
-                    aria-expanded={useExpand ? expanded : undefined}
+                    onClick={rowExpandable ? () => toggleExpanded(key) : undefined}
+                    aria-expanded={rowExpandable ? expanded : undefined}
                   >
                     {useExpand && (
                       <td className="data-table-expand-col">
-                        <ExpandIcon open={expanded} />
+                        {rowExpandable && <ExpandIcon open={expanded} />}
                       </td>
                     )}
                     {columns.map((col, i) => {

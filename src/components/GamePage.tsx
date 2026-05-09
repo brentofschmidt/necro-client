@@ -5,6 +5,7 @@ import { formatRelativeShort } from '../lib/time'
 import { DamageCalculator } from './DamageCalculator'
 import { DamageFlowchartSection } from './DamageFlowchart'
 import { DataTable, DataTableColumn } from './DataTable'
+import { ItemDetails, itemToDetailsData } from './ItemDetails'
 import {
   Ability,
   Action,
@@ -2411,84 +2412,16 @@ function ItemsSection() {
         emptyText="No items defined yet."
         defaultSort={{ columnId: 'name', direction: 'asc' }}
         expandedContent={(i) => {
-          const rarity = rarityById.get(i.rarity)
           const subclass = subclassById.get(i.item_subclass)
           return (
-            <dl className="data-expansion">
-              <dt>ID</dt>
-              <dd><code className="data-table-mono">{i.id}</code></dd>
-              <dt>Subclass</dt>
-              <dd>{subclass?.display_name ?? i.item_subclass}</dd>
-              {subclass?.item_class && (
-                <>
-                  <dt>Class</dt>
-                  <dd>{subclass.item_class}</dd>
-                </>
-              )}
-              <dt>Inventory Slot</dt>
-              <dd>{i.inventory_slot}</dd>
-              <dt>Rarity</dt>
-              <dd>
-                <span style={{ color: rarity?.display_color ?? 'inherit' }}>
-                  {rarity?.display_name ?? i.rarity}
-                </span>
-              </dd>
-              {i.weapon_speed != null && i.weapon_speed > 0 && (
-                <>
-                  <dt>Swing speed</dt>
-                  <dd>{i.weapon_speed}s</dd>
-                </>
-              )}
-              {i.weight > 0 && (
-                <>
-                  <dt>Weight</dt>
-                  <dd>{i.weight}</dd>
-                </>
-              )}
-              {i.required_skill_level > 0 && (
-                <>
-                  <dt>Required Level</dt>
-                  <dd>{i.required_skill_level}</dd>
-                </>
-              )}
-              {i.is_stackable && i.max_stack_size > 1 && (
-                <>
-                  <dt>Max Stack</dt>
-                  <dd>{i.max_stack_size.toLocaleString()}</dd>
-                </>
-              )}
-              <dt>Craftable</dt>
-              <dd>{i.is_craftable ? 'Yes' : 'No'}</dd>
-              {i.description && (
-                <>
-                  <dt>Description</dt>
-                  <dd>{i.description}</dd>
-                </>
-              )}
-              {i.ability_bonuses.length > 0 && (
-                <>
-                  <dt>Bonuses</dt>
-                  <dd>
-                    <ul className="data-expansion-list">
-                      {i.ability_bonuses.map((b, idx) => (
-                        <li
-                          key={idx}
-                          className={
-                            b.value > 0
-                              ? 'data-expansion-positive'
-                              : b.value < 0
-                                ? 'data-expansion-negative'
-                                : ''
-                          }
-                        >
-                          {b.description}
-                        </li>
-                      ))}
-                    </ul>
-                  </dd>
-                </>
-              )}
-            </dl>
+            <ItemDetails
+              data={itemToDetailsData({
+                item: i,
+                rarity: rarityById.get(i.rarity),
+                subclass,
+                itemClass: subclass ? classById.get(subclass.item_class) : undefined,
+              })}
+            />
           )
         }}
       />

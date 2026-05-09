@@ -2070,6 +2070,16 @@ body {
   background: var(--bg-1);
 }
 
+/* Non-expandable row inside an expandable table — keeps the column
+   alignment but signals "no detail here" with muted text and no hover. */
+.data-row-inert td {
+  color: var(--text-dim);
+}
+
+.data-row-inert {
+  cursor: default;
+}
+
 .data-row-expanded,
 .data-row-expanded:hover {
   background: var(--bg-1);

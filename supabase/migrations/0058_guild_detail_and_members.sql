@@ -9,7 +9,7 @@
 --                                     joined date, public note
 --
 -- Both SECURITY DEFINER because guilds + guild_members + characters
--- live under owner-restricted RLS. The functions return only public-
+-- live upnder owner-restricted RLS. The functions return only public-
 -- safe fields (no officer notes, no save state, no equipment).
 --
 -- Idempotent.

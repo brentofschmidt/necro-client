@@ -282,6 +282,39 @@ export type Recipe = {
   outputs: RecipeIngredient[]
 }
 
+// Procs / on-hit / on-crit / on-kill triggers attached to an item.
+// Shape per schema.sql (necro_content.items.trigger_effects).
+export type ItemTriggerEffect = {
+  trigger: string
+  chance: number
+  internalCooldown?: number
+  effect: {
+    type: string
+    description?: string
+    amount?: number
+    duration?: number
+    school?: string
+    target?: string
+    [key: string]: unknown
+  }
+}
+
+export type ItemConsumableEffect = {
+  resourceType: string
+  flatAmount?: number
+  percentOfMax?: number
+  overTime?: boolean
+  duration?: number
+}
+
+export type ItemConsumableBuff = {
+  auraId?: string
+  stat?: string
+  value?: number
+  modifierType?: string
+  duration?: number
+}
+
 export type Item = {
   id: string
   item_name: string
@@ -295,6 +328,12 @@ export type Item = {
   weight: number
   weapon_speed: number | null
   ability_bonuses: AbilityBonus[]
+  stats: ItemStatBonus[]
+  trigger_effects: ItemTriggerEffect[]
+  is_consumable: boolean
+  consumable_cooldown: number | null
+  consumable_effects: ItemConsumableEffect[]
+  consumable_buffs: ItemConsumableBuff[]
   is_craftable: boolean
 }
 
@@ -688,7 +727,7 @@ export async function listItems(): Promise<Item[]> {
     .schema('necro_content')
     .from('items')
     .select(
-      'id, item_name, description, rarity, item_subclass, inventory_slot, required_skill_level, is_stackable, max_stack_size, weight, weapon_speed, ability_bonuses, is_craftable',
+      'id, item_name, description, rarity, item_subclass, inventory_slot, required_skill_level, is_stackable, max_stack_size, weight, weapon_speed, ability_bonuses, stats, trigger_effects, is_consumable, consumable_cooldown, consumable_effects, consumable_buffs, is_craftable',
     )
     .order('item_name', { ascending: true })
   if (error) {
@@ -698,6 +737,14 @@ export async function listItems(): Promise<Item[]> {
   return ((data as Item[] | null) ?? []).map((i) => ({
     ...i,
     ability_bonuses: Array.isArray(i.ability_bonuses) ? i.ability_bonuses : [],
+    stats: Array.isArray(i.stats) ? i.stats : [],
+    trigger_effects: Array.isArray(i.trigger_effects) ? i.trigger_effects : [],
+    consumable_effects: Array.isArray(i.consumable_effects)
+      ? i.consumable_effects
+      : [],
+    consumable_buffs: Array.isArray(i.consumable_buffs)
+      ? i.consumable_buffs
+      : [],
   }))
 }
 

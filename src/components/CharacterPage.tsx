@@ -9,6 +9,15 @@ import {
   getPublicCharacterGuild,
   getPublicCharacterResources,
   getPublicCharacterSkills,
+  Item,
+  ItemClass,
+  ItemSubclass,
+  InventorySlot,
+  listInventorySlots,
+  listItems,
+  listItemClasses,
+  listItemSubclasses,
+  listRarities,
   PublicCharacterAbilityScore,
   PublicCharacterActiveAura,
   PublicCharacterCalculatedStat,
@@ -17,10 +26,16 @@ import {
   PublicCharacterGuild,
   PublicCharacterResource,
   PublicCharacterSkill,
-  ItemStatBonus,
+  Rarity,
 } from '../lib/necroContent'
 import { describeStatEffect } from '../lib/statEffects'
 import { formatRelativeShort } from '../lib/time'
+import { DataTable, type DataTableColumn } from './DataTable'
+import {
+  ItemDetails,
+  RARITY_COLORS,
+  equipmentToDetailsData,
+} from './ItemDetails'
 
 type CharTabId = 'overview' | 'equipment' | 'skills'
 
@@ -40,56 +55,44 @@ function capitalize(s: string): string {
   return s.length === 0 ? s : s.charAt(0).toUpperCase() + s.slice(1)
 }
 
-// Maps rarity → on-screen colour. Mirrors what 0034 / 0037 / 0038 stored
-// in necro_content.rarities.display_color, but inlined here so we don't
-// need a separate fetch just to colourise an item name.
-const RARITY_COLORS: Record<string, string> = {
-  trash:     '#7a7a7a',
-  common:    '#FFFFFF',
-  uncommon:  '#1eff00',
-  rare:      '#0070dd',
-  epic:      '#a335ee',
-  legendary: '#ff8000',
-  mythic:    '#ff4ddc',
-}
-
-// Per-ability "what does this drive" mapping, mirroring the case
-// statement in necro_content.get_public_character_calculated_stats
-// (migration 0049 / 0052). Source-of-truth for the actual stat values
-// is the SQL function — this client copy only powers the inline
-// breakdown next to each ability score. Keep the two in sync when
-// formulas change.
+// Per-ability "what does this drive" mapping, mirroring the
+// derived_effects JSON updated in migration 0070. Source-of-truth for
+// the actual stat values is `necro_content.abilities.derived_effects`
+// (consumed by `get_public_character_calculated_stats`) — this client
+// copy only powers the inline breakdown next to each ability score.
+// Keep the two in sync when formulas change.
 type AbilityDrive = (n: number) => { value: number; isPercent: boolean; suffix: string }
 
 const ABILITY_DRIVES: Record<string, AbilityDrive[]> = {
   strength: [
     (n) => ({ value: n * 2, isPercent: false, suffix: 'attack power' }),
-    (n) => ({ value: Math.floor((n - 10) / 2), isPercent: true, suffix: 'parry' }),
   ],
   dexterity: [
     (n) => ({ value: Math.floor((n - 10) / 2), isPercent: true, suffix: 'crit' }),
-    (n) => ({ value: Math.floor(n / 4), isPercent: true, suffix: 'haste' }),
-    (n) => ({ value: Math.floor((n - 10) / 2), isPercent: true, suffix: 'dodge' }),
+    (n) => ({ value: Math.floor((n - 10) / 2), isPercent: true, suffix: 'accuracy' }),
+    (n) => ({ value: Math.floor((n - 10) / 2), isPercent: true, suffix: 'evasion' }),
+    (n) => ({ value: Math.floor(n / 4), isPercent: false, suffix: 'attack speed' }),
     (n) => ({ value: Math.floor(n / 4), isPercent: false, suffix: 'stamina regen' }),
   ],
   constitution: [
-    (n) => ({ value: n, isPercent: false, suffix: 'armor' }),
+    (n) => ({ value: Math.floor((n - 10) / 2), isPercent: true, suffix: 'block (w/ shield)' }),
+    (n) => ({ value: Math.floor((n - 10) / 2), isPercent: true, suffix: 'spell block (w/ shield)' }),
     (n) => ({ value: Math.floor(n / 5), isPercent: false, suffix: 'health regen' }),
   ],
   intelligence: [
     (n) => ({ value: n * 2, isPercent: false, suffix: 'spell power' }),
     (n) => ({ value: Math.floor((n - 10) / 2), isPercent: true, suffix: 'spell crit' }),
+    (n) => ({ value: Math.floor((n - 10) / 2), isPercent: true, suffix: 'spell accuracy' }),
     (n) => ({ value: Math.floor(n / 4), isPercent: false, suffix: 'mana regen' }),
   ],
   wisdom: [
     (n) => ({ value: n * 2, isPercent: false, suffix: 'healing power' }),
+    (n) => ({ value: Math.floor((n - 10) / 2), isPercent: true, suffix: 'heal crit' }),
+    (n) => ({ value: Math.floor((n - 10) / 2), isPercent: true, suffix: 'spell evasion' }),
     (n) => ({ value: n, isPercent: false, suffix: 'magic resist' }),
     (n) => ({ value: Math.floor(n / 4), isPercent: false, suffix: 'mana regen' }),
   ],
-  charisma: [
-    (n) => ({ value: Math.floor((n - 10) / 2), isPercent: true, suffix: 'expertise' }),
-    (n) => ({ value: Math.floor(n / 5), isPercent: true, suffix: 'versatility' }),
-  ],
+  charisma: [],
 }
 
 function formatDrive(d: { value: number; isPercent: boolean; suffix: string }): string {
@@ -339,48 +342,25 @@ function OverviewSection({ character }: { character: PublicCharacterDetail }) {
       <section className="settings-section">
         <header className="settings-section-header">
           <h2>Resources</h2>
+          <p>Click a row for the base / abilities / aura breakdown.</p>
         </header>
-        {resources === null ? (
-          <p className="text-dim">Loading…</p>
-        ) : resources.length === 0 ? (
-          <p className="text-dim">No resource pools set.</p>
-        ) : (
-          <div className="stat-list">
-            {resources.map((r) => (
-              <ResourceRow key={r.type} resource={r} />
-            ))}
-          </div>
-        )}
+        <ResourcesTable resources={resources} />
       </section>
 
       <section className="settings-section">
         <header className="settings-section-header">
           <h2>Ability Scores</h2>
+          <p>Click a row for the source breakdown and full driver list.</p>
         </header>
-        {scores === null ? (
-          <p className="text-dim">Loading…</p>
-        ) : scores.length === 0 ? (
-          <p className="text-dim">No ability scores set.</p>
-        ) : (
-          <div className="stat-list">
-            {scores.map((s) => (
-              <AbilityRow key={s.ability} score={s} />
-            ))}
-          </div>
-        )}
+        <AbilityScoresTable scores={scores} />
       </section>
 
       <section className="settings-section">
         <header className="settings-section-header">
           <h2>Stats</h2>
+          <p>Click a row for the per-point conversion details.</p>
         </header>
-        {stats === null ? (
-          <p className="text-dim">Loading…</p>
-        ) : stats.length === 0 ? (
-          <p className="text-dim">No stats catalog defined.</p>
-        ) : (
-          <StatsByCategory stats={stats} />
-        )}
+        <StatsTable stats={stats} />
       </section>
 
       <section className="settings-section">
@@ -403,230 +383,490 @@ function OverviewSection({ character }: { character: PublicCharacterDetail }) {
   )
 }
 
-function AbilityRow({ score }: { score: PublicCharacterAbilityScore }) {
-  const total = Math.round(score.total_value)
-  const base = Math.round(score.base_value)
-  const eq = Math.round(score.equipment_bonus_value)
-  const au = Math.round(score.aura_bonus_value)
-  const mod = Math.floor((total - 10) / 2)
-
-  const drives = (ABILITY_DRIVES[score.ability] ?? [])
-    .map((fn) => fn(total))
-    .filter((d) => d.value !== 0)
-
-  // Score-point breakdown so base + gear + aura = total. Modifier (+N
-  // small label next to the total) is a derived D&D-style number,
-  // floor((score-10)/2), and intentionally doesn't appear in this sum.
-  const sources: string[] = [`Base ${base}`]
-  if (eq !== 0) sources.push(`${eq > 0 ? '+' : ''}${eq} gear`)
-  if (au !== 0) sources.push(`${au > 0 ? '+' : ''}${au} aura`)
+function ResourcesTable({
+  resources,
+}: {
+  resources: PublicCharacterResource[] | null
+}) {
+  const columns: DataTableColumn<PublicCharacterResource>[] = [
+    {
+      id: 'name',
+      header: 'Resource',
+      cell: (r) => (
+        <span className="resource-name-cell">
+          <span
+            className="resource-color-dot"
+            style={{ background: r.display_color ?? 'var(--accent)' }}
+            aria-hidden="true"
+          />
+          {r.display_name ?? capitalize(r.type)}
+        </span>
+      ),
+      sortKey: (r) => r.sort_order ?? 999,
+    },
+    {
+      id: 'current',
+      header: 'Current / Max',
+      cell: (r) => `${Math.round(r.current_value)} / ${Math.round(r.max_value)}`,
+      sortKey: (r) => r.max_value,
+      align: 'right',
+    },
+    {
+      id: 'regen',
+      header: 'Regen',
+      cell: (r) =>
+        r.regen_rate > 0
+          ? r.regen_delay > 0
+            ? `${r.regen_rate}/s · ${r.regen_delay}s OOC`
+            : `${r.regen_rate}/s`
+          : '—',
+      sortKey: (r) => r.regen_rate,
+      align: 'right',
+    },
+  ]
 
   return (
-    <div className="stat-row">
-      <div className="stat-name">{score.display_name ?? score.ability}</div>
-      <div className="stat-value-cell">
-        <div className="stat-value-line">
-          <span className="stat-value">{total}</span>
-          <span className="stat-mod">{mod >= 0 ? `+${mod}` : mod}</span>
-        </div>
-        <div className="stat-value-meta">
-          {sources.map((s, i) => (
-            <span key={i}>{s}</span>
-          ))}
-        </div>
-      </div>
-      <div className="stat-effect">
-        {drives.length === 0 ? (
-          <span>—</span>
-        ) : (
-          drives.map((d, i) => <span key={i}>{formatDrive(d)}</span>)
-        )}
-      </div>
-    </div>
+    <DataTable<PublicCharacterResource>
+      rows={resources}
+      columns={columns}
+      rowKey={(r) => r.type}
+      emptyText="No resource pools set."
+      defaultSort={{ columnId: 'name', direction: 'asc' }}
+      expandedContent={(r) => {
+        const base = Math.round(r.base_max_value)
+        const ability = Math.round(r.ability_bonus_max_value)
+        const aura = Math.round(r.bonus_max_value)
+        return (
+          <dl className="data-expansion">
+            <dt>Type</dt>
+            <dd>
+              <code className="data-table-mono">{r.type}</code>
+            </dd>
+            <dt>Base max</dt>
+            <dd>{base}</dd>
+            {ability !== 0 && (
+              <>
+                <dt>Ability bonus</dt>
+                <dd
+                  className={
+                    ability > 0
+                      ? 'data-expansion-positive'
+                      : 'data-expansion-negative'
+                  }
+                >
+                  {ability > 0 ? '+' : ''}
+                  {ability}
+                </dd>
+              </>
+            )}
+            {aura !== 0 && (
+              <>
+                <dt>Aura bonus</dt>
+                <dd
+                  className={
+                    aura > 0
+                      ? 'data-expansion-positive'
+                      : 'data-expansion-negative'
+                  }
+                >
+                  {aura > 0 ? '+' : ''}
+                  {aura}
+                </dd>
+              </>
+            )}
+            <dt>Total max</dt>
+            <dd>{Math.round(r.max_value)}</dd>
+            <dt>Current</dt>
+            <dd>{Math.round(r.current_value)}</dd>
+            {r.regen_rate > 0 && (
+              <>
+                <dt>Regen rate</dt>
+                <dd>{r.regen_rate} / second</dd>
+              </>
+            )}
+            {r.regen_delay > 0 && (
+              <>
+                <dt>Regen delay</dt>
+                <dd>{r.regen_delay}s out of combat</dd>
+              </>
+            )}
+          </dl>
+        )
+      }}
+    />
   )
 }
 
-function ResourceRow({ resource }: { resource: PublicCharacterResource }) {
-  const color = resource.display_color ?? 'var(--accent)'
-  const ability = Math.round(resource.ability_bonus_max_value)
-  const aura = Math.round(resource.bonus_max_value)
-  const current = Math.round(resource.current_value)
-  const max = Math.round(resource.max_value)
-  const base = Math.round(resource.base_max_value)
-
-  const regen =
-    resource.regen_rate > 0
-      ? resource.regen_delay > 0
-        ? `Regen ${resource.regen_rate}/s · ${resource.regen_delay}s OOC`
-        : `Regen ${resource.regen_rate}/s`
-      : '—'
-
-  // Breakdown so base + abilities + aura = max. Always show base; show
-  // abilities and aura only when they contribute something.
-  const sources: string[] = [`Base ${base}`]
-  if (ability !== 0) sources.push(`${ability > 0 ? '+' : ''}${ability} abilities`)
-  if (aura !== 0) sources.push(`${aura > 0 ? '+' : ''}${aura} aura`)
-
-  return (
-    <div className="stat-row">
-      <div className="stat-name">
-        <span
-          className="resource-color-dot"
-          style={{ background: color }}
-          aria-hidden="true"
-        />
-        {resource.display_name ?? capitalize(resource.type)}
-      </div>
-      <div className="stat-value-cell">
-        <div className="stat-value-line">
-          <span className="stat-value">
-            {current}/{max}
+function AbilityScoresTable({
+  scores,
+}: {
+  scores: PublicCharacterAbilityScore[] | null
+}) {
+  const columns: DataTableColumn<PublicCharacterAbilityScore>[] = [
+    {
+      id: 'name',
+      header: 'Ability',
+      cell: (s) => s.display_name ?? s.ability,
+      sortKey: (s) => (s.display_name ?? s.ability).toLowerCase(),
+    },
+    {
+      id: 'score',
+      header: 'Score',
+      cell: (s) => {
+        const total = Math.round(s.total_value)
+        const mod = Math.floor((total - 10) / 2)
+        return (
+          <span>
+            {total}{' '}
+            <span className="stat-mod">{mod >= 0 ? `+${mod}` : mod}</span>
           </span>
-        </div>
-        {sources.length > 1 && (
-          <div className="stat-value-meta">
-            {sources.map((s, i) => (
-              <span key={i}>{s}</span>
-            ))}
-          </div>
-        )}
-      </div>
-      <div className="stat-effect">
-        <span>{regen}</span>
-      </div>
-    </div>
+        )
+      },
+      sortKey: (s) => s.total_value,
+      align: 'right',
+    },
+    {
+      id: 'drives',
+      header: 'Drives',
+      cell: (s) => {
+        const total = Math.round(s.total_value)
+        const drives = (ABILITY_DRIVES[s.ability] ?? [])
+          .map((fn) => fn(total))
+          .filter((d) => d.value !== 0)
+        if (drives.length === 0) return '—'
+        const shown = drives.slice(0, 2).map(formatDrive).join(', ')
+        const extra = drives.length > 2 ? ` +${drives.length - 2} more` : ''
+        return `${shown}${extra}`
+      },
+      align: 'right',
+    },
+  ]
+
+  return (
+    <DataTable<PublicCharacterAbilityScore>
+      rows={scores}
+      columns={columns}
+      rowKey={(s) => s.ability}
+      emptyText="No ability scores set."
+      expandedContent={(s) => {
+        const total = Math.round(s.total_value)
+        const base = Math.round(s.base_value)
+        const eq = Math.round(s.equipment_bonus_value)
+        const au = Math.round(s.aura_bonus_value)
+        const mod = Math.floor((total - 10) / 2)
+        const drives = (ABILITY_DRIVES[s.ability] ?? [])
+          .map((fn) => fn(total))
+          .filter((d) => d.value !== 0)
+        return (
+          <dl className="data-expansion">
+            <dt>Ability</dt>
+            <dd>
+              <code className="data-table-mono">{s.ability}</code>
+            </dd>
+            <dt>Total</dt>
+            <dd>
+              {total} <span className="text-dim">(modifier {mod >= 0 ? `+${mod}` : mod})</span>
+            </dd>
+            <dt>Base</dt>
+            <dd>{base}</dd>
+            {eq !== 0 && (
+              <>
+                <dt>Equipment</dt>
+                <dd
+                  className={
+                    eq > 0 ? 'data-expansion-positive' : 'data-expansion-negative'
+                  }
+                >
+                  {eq > 0 ? '+' : ''}
+                  {eq}
+                </dd>
+              </>
+            )}
+            {au !== 0 && (
+              <>
+                <dt>Aura</dt>
+                <dd
+                  className={
+                    au > 0 ? 'data-expansion-positive' : 'data-expansion-negative'
+                  }
+                >
+                  {au > 0 ? '+' : ''}
+                  {au}
+                </dd>
+              </>
+            )}
+            {drives.length > 0 && (
+              <>
+                <dt>Drives</dt>
+                <dd>
+                  <ul className="data-expansion-list">
+                    {drives.map((d, i) => (
+                      <li
+                        key={i}
+                        className={
+                          d.value > 0
+                            ? 'data-expansion-positive'
+                            : d.value < 0
+                              ? 'data-expansion-negative'
+                              : ''
+                        }
+                      >
+                        {formatDrive(d)}
+                      </li>
+                    ))}
+                  </ul>
+                </dd>
+              </>
+            )}
+          </dl>
+        )
+      }}
+    />
   )
 }
+
+function StatsTable({
+  stats,
+}: {
+  stats: PublicCharacterCalculatedStat[] | null
+}) {
+  const columns: DataTableColumn<PublicCharacterCalculatedStat>[] = [
+    {
+      id: 'category',
+      header: 'Category',
+      cell: (s) => s.category,
+      sortKey: (s) => s.category.toLowerCase(),
+    },
+    {
+      id: 'name',
+      header: 'Stat',
+      cell: (s) => s.display_name,
+      sortKey: (s) => s.display_name.toLowerCase(),
+    },
+    {
+      id: 'value',
+      header: 'Value',
+      cell: (s) => {
+        const v = s.is_percent
+          ? `${Math.round(s.value * 10) / 10}%`
+          : Math.round(s.value).toString()
+        const isZero = Math.round(s.value * 10) === 0
+        return (
+          <span className={isZero ? 'text-dim' : undefined}>{v}</span>
+        )
+      },
+      sortKey: (s) => s.value,
+      align: 'right',
+    },
+    {
+      id: 'effect',
+      header: 'Effect',
+      cell: (s) => {
+        const isZero = Math.round(s.value * 10) === 0
+        const effect = describeStatEffect(s.value, s.conversion_per_point)
+        return (!isZero && effect ? effect.formatted : s.affects) || '—'
+      },
+      align: 'right',
+    },
+  ]
+
+  return (
+    <DataTable<PublicCharacterCalculatedStat>
+      rows={stats}
+      columns={columns}
+      rowKey={(s) => s.id}
+      searchPlaceholder="Search stats…"
+      searchKeys={(s) => [s.id, s.display_name, s.category, s.affects]}
+      emptyText="No stats catalog defined."
+      defaultSort={{ columnId: 'category', direction: 'asc' }}
+      expandedContent={(s) => {
+        const effect = describeStatEffect(s.value, s.conversion_per_point)
+        return (
+          <dl className="data-expansion">
+            <dt>ID</dt>
+            <dd>
+              <code className="data-table-mono">{s.id}</code>
+            </dd>
+            <dt>Category</dt>
+            <dd>{s.category}</dd>
+            <dt>Value</dt>
+            <dd>
+              {s.is_percent
+                ? `${Math.round(s.value * 10) / 10}%`
+                : Math.round(s.value).toString()}
+            </dd>
+            {s.affects && (
+              <>
+                <dt>Affects</dt>
+                <dd>{s.affects}</dd>
+              </>
+            )}
+            {s.conversion_per_point && (
+              <>
+                <dt>Per point</dt>
+                <dd>
+                  <code className="data-table-mono">{s.conversion_per_point}</code>
+                </dd>
+              </>
+            )}
+            {effect && (
+              <>
+                <dt>Effect</dt>
+                <dd>{effect.formatted}</dd>
+              </>
+            )}
+          </dl>
+        )
+      }}
+    />
+  )
+}
+
+// `InventoryOnly` is a special slot for currency/consumables that can never
+// be equipped; we hide it from the equipped-gear table.
+const HIDDEN_EQUIP_SLOTS = new Set(['InventoryOnly'])
 
 function EquipmentSection({ characterId }: { characterId: string }) {
   const [equipment, setEquipment] = useState<PublicCharacterEquipmentSlot[] | null>(
     null,
   )
+  const [slots, setSlots] = useState<InventorySlot[] | null>(null)
+  const [items, setItems] = useState<Item[] | null>(null)
+  const [rarities, setRarities] = useState<Rarity[] | null>(null)
+  const [subclasses, setSubclasses] = useState<ItemSubclass[] | null>(null)
+  const [classes, setClasses] = useState<ItemClass[] | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    getPublicCharacterEquipment(characterId).then((rows) => {
-      if (!cancelled) setEquipment(rows)
+    Promise.all([
+      getPublicCharacterEquipment(characterId),
+      listInventorySlots(),
+      listItems(),
+      listRarities(),
+      listItemSubclasses(),
+      listItemClasses(),
+    ]).then(([eq, sl, it, ra, sc, cl]) => {
+      if (cancelled) return
+      setEquipment(eq)
+      setSlots(sl)
+      setItems(it)
+      setRarities(ra)
+      setSubclasses(sc)
+      setClasses(cl)
     })
     return () => {
       cancelled = true
     }
   }, [characterId])
 
+  // Lookup tables for the drawer detail block.
+  const itemById = new Map((items ?? []).map((i) => [i.id, i]))
+  const rarityById = new Map((rarities ?? []).map((r) => [r.id, r]))
+  const subclassById = new Map((subclasses ?? []).map((sc) => [sc.name, sc]))
+  const classById = new Map((classes ?? []).map((c) => [c.id, c]))
+  const slotById = new Map((slots ?? []).map((s) => [s.id, s]))
+
+  // Merge: every visible inventory slot, filled with the matching equipment
+  // row when one exists. Empty slots get a sentinel row that the table
+  // renders as a non-expandable greyed-out line.
+  const rows: PublicCharacterEquipmentSlot[] | null =
+    slots === null || equipment === null
+      ? null
+      : (() => {
+          const equipBySlot = new Map(equipment.map((e) => [e.slot, e]))
+          return slots
+            .filter((s) => !HIDDEN_EQUIP_SLOTS.has(s.id))
+            .map(
+              (s) =>
+                equipBySlot.get(s.id) ?? {
+                  slot: s.id,
+                  item_id: '',
+                  item_name: null,
+                  item_rarity: null,
+                  item_subclass: null,
+                  description: null,
+                  weapon_speed: null,
+                  ability_bonuses: [],
+                  stats: [],
+                },
+            )
+        })()
+
+  const columns: DataTableColumn<PublicCharacterEquipmentSlot>[] = [
+    {
+      id: 'slot',
+      header: 'Slot',
+      cell: (e) => slotById.get(e.slot)?.display_name ?? e.slot,
+      sortKey: (e) => SLOT_ORDER[e.slot] ?? 999,
+    },
+    {
+      id: 'name',
+      header: 'Item',
+      cell: (e) =>
+        e.item_id ? (
+          <span
+            style={{
+              color: e.item_rarity ? RARITY_COLORS[e.item_rarity] : undefined,
+            }}
+          >
+            {e.item_name ?? e.item_id}
+          </span>
+        ) : (
+          <span className="text-dim">Empty</span>
+        ),
+      sortKey: (e) => (e.item_name ?? '').toLowerCase(),
+    },
+    {
+      id: 'subclass',
+      header: 'Subclass',
+      cell: (e) =>
+        e.item_subclass
+          ? (subclassById.get(e.item_subclass)?.display_name ?? e.item_subclass)
+          : '—',
+      sortKey: (e) => (e.item_subclass ?? '').toLowerCase(),
+      align: 'right',
+    },
+  ]
+
   return (
     <section className="settings-section">
       <header className="settings-section-header">
         <h2>Equipment</h2>
-        <p>Currently equipped items by slot.</p>
+        <p>All equipment slots. Click an equipped row for details.</p>
       </header>
 
-      {equipment === null && <p className="text-dim">Loading…</p>}
-      {equipment !== null && equipment.length === 0 && (
-        <p className="text-dim">No equipment.</p>
-      )}
-      {equipment !== null && equipment.length > 0 && (
-        <div className="content-card-grid">
-          {[...equipment]
-            .sort(
-              (a, b) =>
-                (SLOT_ORDER[a.slot] ?? 99) - (SLOT_ORDER[b.slot] ?? 99),
-            )
-            .map((e) => (
-              <EquipmentCard key={e.slot} item={e} />
-            ))}
-        </div>
-      )}
+      <DataTable<PublicCharacterEquipmentSlot>
+        rows={rows}
+        columns={columns}
+        rowKey={(e) => e.slot}
+        searchPlaceholder="Search equipment…"
+        searchKeys={(e) => [
+          e.slot,
+          e.item_name ?? '',
+          e.item_subclass ?? '',
+          e.description ?? '',
+        ]}
+        emptyText="No equipment slots configured."
+        defaultSort={{ columnId: 'slot', direction: 'asc' }}
+        isExpandable={(e) => !!e.item_id}
+        expandedContent={(e) => {
+          const subclass = e.item_subclass
+            ? subclassById.get(e.item_subclass)
+            : undefined
+          return (
+            <ItemDetails
+              data={equipmentToDetailsData({
+                slot: e,
+                catalogItem: itemById.get(e.item_id),
+                rarity: e.item_rarity ? rarityById.get(e.item_rarity) : undefined,
+                subclass,
+                itemClass: subclass ? classById.get(subclass.item_class) : undefined,
+              })}
+            />
+          )
+        }}
+      />
     </section>
-  )
-}
-
-function EquipmentCard({ item }: { item: PublicCharacterEquipmentSlot }) {
-  const titleColor = item.item_rarity ? RARITY_COLORS[item.item_rarity] : undefined
-
-  return (
-    <article className="content-card">
-      <header className="content-card-header">
-        <h3 className="content-card-title" style={{ color: titleColor }}>
-          {item.item_name ?? item.item_id}
-        </h3>
-        <span className="content-card-id">{item.slot}</span>
-      </header>
-
-      {item.description && (
-        <p className="content-card-body">{item.description}</p>
-      )}
-
-      {item.weapon_speed != null && item.weapon_speed > 0 && (
-        <div className="content-card-stats">
-          <span className="stat-pill stat-pill-muted">
-            Spd {item.weapon_speed}s
-          </span>
-        </div>
-      )}
-
-      {item.ability_bonuses.length > 0 && (
-        <BonusList title="Abilities" entries={item.ability_bonuses} />
-      )}
-
-      {item.stats.length > 0 && (
-        <BonusList
-          title="Stats"
-          entries={item.stats.map((s) => ({
-            value: s.value,
-            description: formatItemStatBonus(s),
-          }))}
-        />
-      )}
-
-      <div className="content-card-meta">
-        {item.item_rarity && (
-          <span className="tag-muted">{capitalize(item.item_rarity)}</span>
-        )}
-        {item.item_subclass && (
-          <span className="tag-muted">{item.item_subclass}</span>
-        )}
-      </div>
-    </article>
-  )
-}
-
-function formatItemStatBonus(s: ItemStatBonus): string {
-  const sign = s.value > 0 ? '+' : ''
-  const suffix = s.modifierType === 'Percent' ? '%' : ''
-  const label = s.stat
-    .split('_')
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ')
-  return `${sign}${s.value}${suffix} ${label}`
-}
-
-function BonusList({
-  title,
-  entries,
-}: {
-  title: string
-  entries: { value: number; description: string }[]
-}) {
-  return (
-    <div className="content-card-bonus-group">
-      <div className="content-card-bonus-heading">{title}</div>
-      <ul className="content-card-bonuses">
-        {entries.map((b, i) => (
-          <li
-            key={i}
-            className={
-              b.value > 0
-                ? 'content-card-bonus-positive'
-                : b.value < 0
-                  ? 'content-card-bonus-negative'
-                  : ''
-            }
-          >
-            {b.description}
-          </li>
-        ))}
-      </ul>
-    </div>
   )
 }
 
@@ -672,52 +912,6 @@ function AuraCard({ aura }: { aura: PublicCharacterActiveAura }) {
         {aura.caster_name && ` · ${aura.caster_name}`}
       </div>
     </article>
-  )
-}
-
-function StatsByCategory({ stats }: { stats: PublicCharacterCalculatedStat[] }) {
-  // Bucket by category, preserving the per-row sort_order from the catalog.
-  const byCategory = new Map<string, PublicCharacterCalculatedStat[]>()
-  for (const s of stats) {
-    const list = byCategory.get(s.category) ?? []
-    list.push(s)
-    byCategory.set(s.category, list)
-  }
-
-  return (
-    <div className="stats-categories">
-      {Array.from(byCategory.entries()).map(([category, rows]) => (
-        <div key={category} className="content-subgroup">
-          <h3 className="content-subgroup-heading">{category}</h3>
-          <div className="stat-list">
-            {rows.map((s) => (
-              <StatRow key={s.id} stat={s} />
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function StatRow({ stat }: { stat: PublicCharacterCalculatedStat }) {
-  const value = stat.is_percent
-    ? `${Math.round(stat.value * 10) / 10}%`
-    : Math.round(stat.value).toString()
-  const isZero = Math.round(stat.value * 10) === 0
-  const effect = describeStatEffect(stat.value, stat.conversion_per_point)
-  // Effect line falls back to the catalog's "affects" tag when:
-  //   - we couldn't parse the conversion line
-  //   - or the value computes to zero (no point showing "+0% physical damage")
-  const effectText =
-    !isZero && effect ? effect.formatted : stat.affects || null
-
-  return (
-    <div className={`stat-row${isZero ? ' stat-row-zero' : ''}`}>
-      <div className="stat-name">{stat.display_name}</div>
-      <div className="stat-value">{value}</div>
-      <div className="stat-effect">{effectText}</div>
-    </div>
   )
 }
 
