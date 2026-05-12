@@ -13,6 +13,7 @@ import { StatIcon } from './StatIcon'
 import { ActionIcon } from './ActionIcon'
 import { EffectsList } from './EffectsList'
 import { RARITY_COLORS } from './ItemDetails'
+import { SpellSchoolIcon } from './SpellSchoolIcon'
 import { DataTable, DataTableColumn } from './DataTable'
 import { ItemDetails, itemToDetailsData } from './ItemDetails'
 import {
@@ -1108,11 +1109,7 @@ function SpellSchoolsSection() {
       header: 'Name',
       cell: (s) => (
         <>
-          <span
-            className="spell-school-swatch"
-            style={{ background: s.display_color }}
-            aria-hidden="true"
-          />
+          <SpellSchoolIcon id={s.id} color={s.display_color} />
           <span
             className="data-cell-name"
             style={{ color: s.display_color }}
@@ -2692,8 +2689,22 @@ function SpellsSection() {
               <>
                 <dt>Magic school</dt>
                 <dd>
-                  {magicSchools?.find((sch) => sch.id === s.magic_school)
-                    ?.display_name ?? capitalize(s.magic_school)}
+                  {(() => {
+                    const sch = magicSchools?.find(
+                      (m) => m.id === s.magic_school,
+                    )
+                    return (
+                      <>
+                        <SpellSchoolIcon
+                          id={s.magic_school}
+                          color={sch?.display_color}
+                        />
+                        <span style={sch ? { color: sch.display_color } : undefined}>
+                          {sch?.display_name ?? capitalize(s.magic_school)}
+                        </span>
+                      </>
+                    )
+                  })()}
                 </dd>
               </>
             )}
