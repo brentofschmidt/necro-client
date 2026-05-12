@@ -44,6 +44,7 @@ import {
   listResources,
   listSkills,
   listSpells,
+  listSpellSchools,
   listStats,
   listZones,
   PublicCharacter,
@@ -56,6 +57,7 @@ import {
   Resource,
   Skill,
   Spell,
+  SpellSchool,
   Stat,
   Zone,
 } from '../lib/necroContent'
@@ -74,9 +76,9 @@ type SectionId =
 // "Game Information" tabs: the world's reference material — Overview,
 // the systemic catalogs (rarities / damage types / stats / abilities /
 // resources / inventory slots / item classes + subclasses), the
-// progression catalogs (skills / proficiencies), and the lore /
-// world-shape catalogs (races / alignments / factions / zones /
-// realms). Read-heavy reference, mostly static data.
+// progression catalogs (skills / proficiencies / schools of magic), and
+// the lore / world-shape catalogs (races / alignments / factions /
+// zones / realms). Read-heavy reference, mostly static data.
 type GameInfoTabId =
   | 'overview'
   | 'item_classes'
@@ -89,6 +91,7 @@ type GameInfoTabId =
   | 'resources'
   | 'skills'
   | 'proficiencies'
+  | 'spell_schools'
   | 'races'
   | 'alignments'
   | 'factions'
@@ -127,6 +130,7 @@ const GAME_INFO_TABS: { id: GameInfoTabId; label: string }[] = [
   { id: 'resources', label: 'Resources' },
   { id: 'skills', label: 'Skills' },
   { id: 'proficiencies', label: 'Proficiencies' },
+  { id: 'spell_schools', label: 'Schools of Magic' },
   { id: 'races', label: 'Races' },
   { id: 'alignments', label: 'Alignments' },
   { id: 'factions', label: 'Factions' },
@@ -287,6 +291,14 @@ const TAB_ICONS: Record<GameInfoTabId | DatabaseTabId | DevTabId, ReactNode> = {
       <path d="M20 4L9 15" />
       <path d="M9 15l-2 2 3 3 2-2" />
       <path d="M5 19l2 2" />
+    </TabIcon>
+  ),
+  spell_schools: (
+    <TabIcon>
+      <path d="M5 3l-2 5 5 2 2-5z" />
+      <path d="M19 7l2 5-5 2-2-5z" />
+      <path d="M7 14l-2 5 5 2 2-5z" />
+      <path d="M14 14h5v5" />
     </TabIcon>
   ),
   races: (
@@ -559,6 +571,9 @@ export function GamePage() {
       break
     case 'proficiencies':
       gameInfoContent = <ProficienciesSection />
+      break
+    case 'spell_schools':
+      gameInfoContent = <SpellSchoolsSection />
       break
     case 'races':
       gameInfoContent = <RacesSection />
@@ -1079,6 +1094,77 @@ function ProficienciesSection() {
         emptyText="No proficiencies defined yet."
         defaultSort={{ columnId: 'name', direction: 'asc' }}
         expandedContent={(s) => <SkillExpansion skill={s} />}
+      />
+    </section>
+  )
+}
+
+function SpellSchoolsSection() {
+  const schools = useAsyncList<SpellSchool>(() => listSpellSchools())
+
+  const columns: DataTableColumn<SpellSchool>[] = [
+    {
+      id: 'name',
+      header: 'Name',
+      cell: (s) => (
+        <>
+          <span
+            className="spell-school-swatch"
+            style={{ background: s.display_color }}
+            aria-hidden="true"
+          />
+          <span
+            className="data-cell-name"
+            style={{ color: s.display_color }}
+          >
+            {s.display_name}
+          </span>
+        </>
+      ),
+      sortKey: (s) => s.sort_order,
+    },
+  ]
+
+  return (
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Schools of Magic</h2>
+        <p>
+          The conceptual categorisation of magic — Evocation,
+          Restoration, Enchantment, and the rest. Independent of damage
+          type: a fire spell can be Evocation or Conjuration depending
+          on whether it explodes the target or summons a flame.
+        </p>
+      </header>
+      <DataTable<SpellSchool>
+        rows={schools}
+        columns={columns}
+        rowKey={(s) => s.id}
+        searchPlaceholder="Search schools…"
+        searchKeys={(s) => [s.display_name, s.id, s.description]}
+        emptyText="No schools of magic defined yet."
+        defaultSort={{ columnId: 'name', direction: 'asc' }}
+        expandedContent={(s) => (
+          <dl className="data-expansion">
+            <dt>ID</dt>
+            <dd><code className="data-table-mono">{s.id}</code></dd>
+            {s.description && (
+              <>
+                <dt>Description</dt>
+                <dd>{s.description}</dd>
+              </>
+            )}
+            <dt>Display color</dt>
+            <dd>
+              <span
+                className="spell-school-swatch"
+                style={{ background: s.display_color }}
+                aria-hidden="true"
+              />
+              <code className="data-table-mono">{s.display_color}</code>
+            </dd>
+          </dl>
+        )}
       />
     </section>
   )
@@ -1781,10 +1867,35 @@ function RecipesSection() {
   const { gameId } = useParams<{ gameId: string }>()
   const recipes = useAsyncList<Recipe>(() => listRecipes())
   const items = useAsyncList<Item>(() => listItems())
+  const [skillFilter, setSkillFilter] = useState<string>('')
+  const [stationFilter, setStationFilter] = useState<string>('')
 
   const itemNameById = new Map((items ?? []).map((i) => [i.id, i.item_name]))
   const itemRarityById = new Map((items ?? []).map((i) => [i.id, i.rarity]))
   const nameOf = (id: string) => itemNameById.get(id) ?? id
+
+  // Skill + station options derived from the recipe rows. `formatStation`
+  // already handles the display formatting for both (snake_case → Title
+  // Case), so we reuse it for option labels.
+  const skillOptions = Array.from(
+    new Set((recipes ?? []).map((r) => r.skill).filter(Boolean)),
+  )
+    .sort()
+    .map((s) => ({ value: s, label: formatStation(s) }))
+  const stationOptions = Array.from(
+    new Set((recipes ?? []).map((r) => r.station_tag).filter(Boolean)),
+  )
+    .sort()
+    .map((s) => ({ value: s, label: formatStation(s) }))
+
+  const filteredRecipes =
+    recipes === null
+      ? null
+      : recipes.filter((r) => {
+          if (skillFilter && r.skill !== skillFilter) return false
+          if (stationFilter && r.station_tag !== stationFilter) return false
+          return true
+        })
 
   function formatCraftTime(seconds: number): string {
     return seconds % 1 === 0
@@ -1822,8 +1933,36 @@ function RecipesSection() {
           station. Click a row for details.
         </p>
       </header>
+      <div className="filter-bar" role="group" aria-label="Filter recipes">
+        <FilterSelect
+          label="Skill"
+          value={skillFilter}
+          onChange={setSkillFilter}
+          allLabel="All skills"
+          options={skillOptions}
+        />
+        <FilterSelect
+          label="Station"
+          value={stationFilter}
+          onChange={setStationFilter}
+          allLabel="All stations"
+          options={stationOptions}
+        />
+        {(skillFilter || stationFilter) && (
+          <button
+            type="button"
+            className="filter-reset"
+            onClick={() => {
+              setSkillFilter('')
+              setStationFilter('')
+            }}
+          >
+            Reset
+          </button>
+        )}
+      </div>
       <DataTable<Recipe>
-        rows={recipes}
+        rows={filteredRecipes}
         columns={columns}
         rowKey={(r) => r.id}
         searchPlaceholder="Search recipes…"
@@ -1836,7 +1975,7 @@ function RecipesSection() {
           ...r.outputs.map((o) => nameOf(o.itemId)),
           ...r.ingredients.map((i) => nameOf(i.itemId)),
         ]}
-        emptyText="No recipes defined yet."
+        emptyText="No recipes match the current filters."
         defaultSort={{ columnId: 'name', direction: 'asc' }}
         expandedContent={(r) => (
           <dl className="data-expansion">
@@ -2026,6 +2165,45 @@ function RaritiesSection() {
   )
 }
 
+// Small label+select pair used by every DataTable filter bar. Empty
+// string value means "any" — the option labelled `allLabel` selects it.
+// Disabled state dims and stops pointer interaction (used when the
+// option set depends on another filter and isn't populated yet).
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+  allLabel,
+  disabled,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  options: { value: string; label: string }[]
+  allLabel: string
+  disabled?: boolean
+}) {
+  return (
+    <label className="filter-field">
+      <span className="filter-field-label">{label}</span>
+      <select
+        className="filter-field-select"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+      >
+        <option value="">{allLabel}</option>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
 function ItemsSection() {
   const { gameId } = useParams<{ gameId: string }>()
   const items = useAsyncList<Item>(() => listItems())
@@ -2041,6 +2219,40 @@ function ItemsSection() {
     const sc = subclassById.get(i.item_subclass)
     return sc ? classById.get(sc.item_class) : undefined
   }
+
+  // Filter state — empty string means "any". Subclass is dependent on
+  // class; selecting a class narrows the Subclass dropdown to that
+  // class's subclasses and clears any out-of-scope selection.
+  const [classFilter, setClassFilter] = useState<string>('')
+  const [subclassFilter, setSubclassFilter] = useState<string>('')
+  const [rarityFilter, setRarityFilter] = useState<string>('')
+
+  const subclassesForClass = (classes ?? []).length
+    ? (subclasses ?? []).filter(
+        (sc) => !classFilter || sc.item_class === classFilter,
+      )
+    : []
+
+  // Drop any subclass selection that no longer belongs to the picked class.
+  useEffect(() => {
+    if (!classFilter || !subclassFilter) return
+    const stillValid = subclassesForClass.some((sc) => sc.name === subclassFilter)
+    if (!stillValid) setSubclassFilter('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [classFilter])
+
+  const filteredItems =
+    items === null
+      ? null
+      : items.filter((i) => {
+          if (rarityFilter && i.rarity !== rarityFilter) return false
+          if (subclassFilter && i.item_subclass !== subclassFilter) return false
+          if (classFilter) {
+            const c = classFor(i)
+            if (!c || c.id !== classFilter) return false
+          }
+          return true
+        })
 
   const columns: DataTableColumn<Item>[] = [
     {
@@ -2107,8 +2319,54 @@ function ItemsSection() {
           item's page.
         </p>
       </header>
+      <div className="filter-bar" role="group" aria-label="Filter items">
+        <FilterSelect
+          label="Class"
+          value={classFilter}
+          onChange={setClassFilter}
+          allLabel="All classes"
+          options={(classes ?? [])
+            .slice()
+            .sort((a, b) => a.sort_order - b.sort_order)
+            .map((c) => ({ value: c.id, label: c.display_name }))}
+        />
+        <FilterSelect
+          label="Subclass"
+          value={subclassFilter}
+          onChange={setSubclassFilter}
+          allLabel="All subclasses"
+          disabled={subclassesForClass.length === 0}
+          options={subclassesForClass
+            .slice()
+            .sort((a, b) => a.display_name.localeCompare(b.display_name))
+            .map((sc) => ({ value: sc.name, label: sc.display_name }))}
+        />
+        <FilterSelect
+          label="Rarity"
+          value={rarityFilter}
+          onChange={setRarityFilter}
+          allLabel="All rarities"
+          options={(rarities ?? [])
+            .slice()
+            .sort((a, b) => a.sort_order - b.sort_order)
+            .map((r) => ({ value: r.id, label: r.display_name }))}
+        />
+        {(classFilter || subclassFilter || rarityFilter) && (
+          <button
+            type="button"
+            className="filter-reset"
+            onClick={() => {
+              setClassFilter('')
+              setSubclassFilter('')
+              setRarityFilter('')
+            }}
+          >
+            Reset
+          </button>
+        )}
+      </div>
       <DataTable<Item>
-        rows={items}
+        rows={filteredItems}
         columns={columns}
         rowKey={(i) => i.id}
         searchPlaceholder="Search items…"
@@ -2119,7 +2377,7 @@ function ItemsSection() {
           subclassById.get(i.item_subclass)?.display_name ?? '',
           rarityById.get(i.rarity)?.display_name ?? '',
         ]}
-        emptyText="No items defined yet."
+        emptyText="No items match the current filters."
         defaultSort={{ columnId: 'name', direction: 'asc' }}
         expandedContent={(i) => {
           const subclass = subclassById.get(i.item_subclass)
@@ -2161,6 +2419,28 @@ function OpenIcon() {
 
 function ActionsSection() {
   const actions = useAsyncList<Action>(() => listActions())
+  const [weaponFilter, setWeaponFilter] = useState<string>('')
+
+  // Distinct weapon types are derived from the rows themselves so any
+  // future action that gates on a new weapon class shows up here without
+  // touching this section.
+  const weaponOptions = Array.from(
+    new Set(
+      (actions ?? [])
+        .flatMap((a) => a.required_weapon_types)
+        .filter((w): w is string => !!w),
+    ),
+  )
+    .sort()
+    .map((w) => ({ value: w, label: capitalize(w) }))
+
+  const filteredActions =
+    actions === null
+      ? null
+      : actions.filter((a) => {
+          if (!weaponFilter) return true
+          return a.required_weapon_types.includes(weaponFilter)
+        })
 
   const columns: DataTableColumn<Action>[] = [
     {
@@ -2188,8 +2468,26 @@ function ActionsSection() {
           AP point. Click a row for details.
         </p>
       </header>
+      <div className="filter-bar" role="group" aria-label="Filter actions">
+        <FilterSelect
+          label="Weapon"
+          value={weaponFilter}
+          onChange={setWeaponFilter}
+          allLabel="All weapons"
+          options={weaponOptions}
+        />
+        {weaponFilter && (
+          <button
+            type="button"
+            className="filter-reset"
+            onClick={() => setWeaponFilter('')}
+          >
+            Reset
+          </button>
+        )}
+      </div>
       <DataTable<Action>
-        rows={actions}
+        rows={filteredActions}
         columns={columns}
         rowKey={(a) => a.asset_name}
         searchPlaceholder="Search actions…"
@@ -2200,7 +2498,7 @@ function ActionsSection() {
           a.type,
           a.targeting,
         ]}
-        emptyText="No actions defined yet."
+        emptyText="No actions match the current filters."
         defaultSort={{ columnId: 'name', direction: 'asc' }}
         expandedContent={(a) => (
           <dl className="data-expansion">
@@ -2261,6 +2559,56 @@ function ActionsSection() {
 
 function SpellsSection() {
   const spells = useAsyncList<Spell>(() => listSpells())
+  const magicSchools = useAsyncList<SpellSchool>(() => listSpellSchools())
+  const [schoolFilter, setSchoolFilter] = useState<string>('')
+  const [magicSchoolFilter, setMagicSchoolFilter] = useState<string>('')
+  const [typeFilter, setTypeFilter] = useState<string>('')
+
+  // Damage-school option set derived from spell rows so new elemental
+  // schools (frost, shadow, etc.) appear without touching this component.
+  const schoolOptions = Array.from(
+    new Set(
+      (spells ?? [])
+        .map((s) => s.damage_school)
+        .filter((s): s is string => !!s),
+    ),
+  )
+    .sort()
+    .map((s) => ({ value: s, label: capitalize(s) }))
+
+  // Magic-school options come from the catalog (sorted by sort_order)
+  // so the filter list mirrors the database tab ordering — Evocation
+  // first, Divination last — regardless of which spells are seeded.
+  const magicSchoolOptions = (magicSchools ?? [])
+    .slice()
+    .sort((a, b) => a.sort_order - b.sort_order)
+    .map((s) => ({ value: s.id, label: s.display_name }))
+
+  // Type buckets the spell list into the three logical kinds: Heal (any
+  // is_heal), Damage (has damage_school and not a heal), Other (buffs,
+  // wards, status — usually StatModifier-only effects).
+  const typeOptions = [
+    { value: 'damage', label: 'Damage' },
+    { value: 'heal', label: 'Heal' },
+    { value: 'other', label: 'Other' },
+  ]
+
+  function typeOf(s: Spell): 'damage' | 'heal' | 'other' {
+    if (s.is_heal) return 'heal'
+    if (s.damage_school) return 'damage'
+    return 'other'
+  }
+
+  const filteredSpells =
+    spells === null
+      ? null
+      : spells.filter((s) => {
+          if (schoolFilter && s.damage_school !== schoolFilter) return false
+          if (magicSchoolFilter && s.magic_school !== magicSchoolFilter)
+            return false
+          if (typeFilter && typeOf(s) !== typeFilter) return false
+          return true
+        })
 
   const columns: DataTableColumn<Spell>[] = [
     {
@@ -2287,8 +2635,44 @@ function SpellsSection() {
           200% SP) sizes how hard it hits. Click a row for details.
         </p>
       </header>
+      <div className="filter-bar" role="group" aria-label="Filter spells">
+        <FilterSelect
+          label="Magic school"
+          value={magicSchoolFilter}
+          onChange={setMagicSchoolFilter}
+          allLabel="All magic schools"
+          options={magicSchoolOptions}
+        />
+        <FilterSelect
+          label="Damage school"
+          value={schoolFilter}
+          onChange={setSchoolFilter}
+          allLabel="All damage schools"
+          options={schoolOptions}
+        />
+        <FilterSelect
+          label="Type"
+          value={typeFilter}
+          onChange={setTypeFilter}
+          allLabel="All types"
+          options={typeOptions}
+        />
+        {(schoolFilter || magicSchoolFilter || typeFilter) && (
+          <button
+            type="button"
+            className="filter-reset"
+            onClick={() => {
+              setSchoolFilter('')
+              setMagicSchoolFilter('')
+              setTypeFilter('')
+            }}
+          >
+            Reset
+          </button>
+        )}
+      </div>
       <DataTable<Spell>
-        rows={spells}
+        rows={filteredSpells}
         columns={columns}
         rowKey={(s) => s.asset_name}
         searchPlaceholder="Search spells…"
@@ -2298,15 +2682,24 @@ function SpellsSection() {
           s.description,
           s.damage_school ?? '',
         ]}
-        emptyText="No spells defined yet."
+        emptyText="No spells match the current filters."
         defaultSort={{ columnId: 'name', direction: 'asc' }}
         expandedContent={(s) => (
           <dl className="data-expansion">
             <dt>ID</dt>
             <dd><code className="data-table-mono">{s.asset_name}</code></dd>
+            {s.magic_school && (
+              <>
+                <dt>Magic school</dt>
+                <dd>
+                  {magicSchools?.find((sch) => sch.id === s.magic_school)
+                    ?.display_name ?? capitalize(s.magic_school)}
+                </dd>
+              </>
+            )}
             {s.damage_school && (
               <>
-                <dt>School</dt>
+                <dt>Damage school</dt>
                 <dd>{s.damage_school}</dd>
               </>
             )}

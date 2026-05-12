@@ -408,6 +408,20 @@ export type Action = {
 export type Spell = Action & {
   splash_radius: number | null
   splash_damage_multiplier: number | null
+  // D&D-style school (Evocation, Restoration, Enchantment, …). Distinct
+  // from `damage_school` (fire / frost / holy / …): magic_school answers
+  // "what KIND of magic is this", damage_school answers "which mitigation
+  // stat soaks the hit". Nullable so utility / not-yet-tagged spells
+  // don't have to claim a school.
+  magic_school: string | null
+}
+
+export type SpellSchool = {
+  id: string
+  display_name: string
+  description: string
+  display_color: string
+  sort_order: number
 }
 
 export type SkillCategory = 'Proficiency' | 'Activity'
@@ -932,7 +946,7 @@ export async function listSpells(): Promise<Spell[]> {
   const { data, error } = await supabase
     .schema('necro_content')
     .from('spells')
-    .select(`${ACTION_COLUMNS}, splash_radius, splash_damage_multiplier`)
+    .select(`${ACTION_COLUMNS}, splash_radius, splash_damage_multiplier, magic_school`)
     .order('ability_name', { ascending: true })
   if (error) {
     console.error('Failed to load spells:', error.message)
@@ -943,6 +957,19 @@ export async function listSpells(): Promise<Spell[]> {
     required_weapon_types: Array.isArray(s.required_weapon_types) ? s.required_weapon_types : [],
     effects: Array.isArray(s.effects) ? s.effects : [],
   }))
+}
+
+export async function listSpellSchools(): Promise<SpellSchool[]> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .from('spell_schools')
+    .select('id, display_name, description, display_color, sort_order')
+    .order('sort_order', { ascending: true })
+  if (error) {
+    console.error('Failed to load spell schools:', error.message)
+    return []
+  }
+  return (data as SpellSchool[] | null) ?? []
 }
 
 export async function listSkills(): Promise<Skill[]> {
