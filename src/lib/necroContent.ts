@@ -343,6 +343,44 @@ export type ActionEffect = {
   [key: string]: unknown
 }
 
+// Strongly-typed view of a DamageOverTime effect entry inside
+// `actions.effects`. Total damage over the effect's duration =
+// floor(duration / tick_interval) ticks, each tick running through the
+// same proficiency-roll + crit + mitigation pipeline as a single hit.
+export type ActionEffectDamageOverTime = {
+  type: 'DamageOverTime'
+  coefficient: number
+  school: string
+  target: string
+  // Seconds between ticks. Each tick applies `coefficient` × power.
+  tick_interval: number
+  // Total duration of the effect, in seconds. The first tick fires at
+  // `tick_interval` seconds; the last fires at `duration` seconds.
+  duration: number
+  description: string
+}
+
+// Narrow an `ActionEffect` to the DOT variant. Returns null when the
+// effect isn't a DOT or is malformed.
+export function asDamageOverTimeEffect(
+  e: ActionEffect,
+): ActionEffectDamageOverTime | null {
+  if (e.type !== 'DamageOverTime') return null
+  const dur = Number(e.duration)
+  const tick = Number(e.tick_interval)
+  if (!Number.isFinite(dur) || dur <= 0) return null
+  if (!Number.isFinite(tick) || tick <= 0) return null
+  return {
+    type: 'DamageOverTime',
+    coefficient: Number(e.coefficient ?? 0),
+    school: String(e.school ?? 'physical'),
+    target: String(e.target ?? 'Primary'),
+    tick_interval: tick,
+    duration: dur,
+    description: String(e.description ?? ''),
+  }
+}
+
 export type Action = {
   asset_name: string
   ability_name: string
@@ -402,7 +440,12 @@ export type Race = {
   id: string
   display_name: string
   description: string
-  ability_bonuses: AbilityBonus[]
+  // Race-granted effects. Currently all entries are ability-score
+  // modifiers (same shape as items'/auras' ability_bonuses), but the
+  // field is named `effects` so future non-ability effects (resistances,
+  // passive traits, starting buffs) can live here without another
+  // rename.
+  effects: AbilityBonus[]
 }
 
 export type Faction = {
@@ -748,6 +791,69 @@ export async function listItems(): Promise<Item[]> {
   }))
 }
 
+// Fetches a single item by id with the same column shape as listItems.
+// Returns null on not-found so the item page can render a not-found state.
+export async function getItem(id: string): Promise<Item | null> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .from('items')
+    .select(
+      'id, item_name, description, rarity, item_subclass, inventory_slot, required_skill_level, is_stackable, max_stack_size, weight, weapon_speed, ability_bonuses, stats, trigger_effects, is_consumable, consumable_cooldown, consumable_effects, consumable_buffs, is_craftable',
+    )
+    .eq('id', id)
+    .maybeSingle()
+  if (error) {
+    console.error('Failed to load item:', error.message)
+    return null
+  }
+  if (!data) return null
+  const i = data as Item
+  return {
+    ...i,
+    ability_bonuses: Array.isArray(i.ability_bonuses) ? i.ability_bonuses : [],
+    stats: Array.isArray(i.stats) ? i.stats : [],
+    trigger_effects: Array.isArray(i.trigger_effects) ? i.trigger_effects : [],
+    consumable_effects: Array.isArray(i.consumable_effects)
+      ? i.consumable_effects
+      : [],
+    consumable_buffs: Array.isArray(i.consumable_buffs)
+      ? i.consumable_buffs
+      : [],
+  }
+}
+
+// Admin-only partial update. Server-side role check lives inside the RPC;
+// the client surface stays thin. Returns the refreshed item on success,
+// null on RPC failure (error logged via console.error like the readers).
+export async function updateItem(
+  id: string,
+  patch: Partial<Item>,
+): Promise<Item | null> {
+  const { data, error } = await supabase
+    .schema('necro_content')
+    .rpc('update_item_by_admin', { p_id: id, p_patch: patch })
+  if (error) {
+    console.error('Failed to update item:', error.message)
+    return null
+  }
+  const row = (Array.isArray(data) ? data[0] : data) as Item | null
+  if (!row) return null
+  return {
+    ...row,
+    ability_bonuses: Array.isArray(row.ability_bonuses) ? row.ability_bonuses : [],
+    stats: Array.isArray(row.stats) ? row.stats : [],
+    trigger_effects: Array.isArray(row.trigger_effects)
+      ? row.trigger_effects
+      : [],
+    consumable_effects: Array.isArray(row.consumable_effects)
+      ? row.consumable_effects
+      : [],
+    consumable_buffs: Array.isArray(row.consumable_buffs)
+      ? row.consumable_buffs
+      : [],
+  }
+}
+
 export async function listRarities(): Promise<Rarity[]> {
   const { data, error } = await supabase
     .schema('necro_content')
@@ -860,7 +966,7 @@ export async function listRaces(): Promise<Race[]> {
   const { data, error } = await supabase
     .schema('necro_content')
     .from('races')
-    .select('id, display_name, description, ability_bonuses')
+    .select('id, display_name, description, effects')
     .order('display_name', { ascending: true })
   if (error) {
     console.error('Failed to load races:', error.message)
@@ -868,7 +974,7 @@ export async function listRaces(): Promise<Race[]> {
   }
   return ((data as Race[] | null) ?? []).map((r) => ({
     ...r,
-    ability_bonuses: Array.isArray(r.ability_bonuses) ? r.ability_bonuses : [],
+    effects: Array.isArray(r.effects) ? r.effects : [],
   }))
 }
 

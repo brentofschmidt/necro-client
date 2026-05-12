@@ -36,11 +36,18 @@ import {
   RARITY_COLORS,
   equipmentToDetailsData,
 } from './ItemDetails'
+import { SkillIcon } from './SkillIcon'
+import { InventorySlotIcon } from './InventorySlotIcon'
+import { AbilityIcon } from './AbilityIcon'
+import { ResourceIcon } from './ResourceIcon'
+import { ItemIcon } from './ItemIcon'
+import { StatIcon } from './StatIcon'
 
-type CharTabId = 'overview' | 'equipment' | 'skills'
+type CharTabId = 'overview' | 'stats' | 'equipment' | 'skills'
 
 const TABS: { id: CharTabId; label: string }[] = [
   { id: 'overview', label: 'Overview' },
+  { id: 'stats', label: 'Stats' },
   { id: 'equipment', label: 'Equipment' },
   { id: 'skills', label: 'Skills' },
 ]
@@ -197,6 +204,9 @@ export function CharacterPage() {
     case 'overview':
       content = <OverviewSection character={character} />
       break
+    case 'stats':
+      content = <StatsSection characterId={character.id} />
+      break
     case 'equipment':
       content = <EquipmentSection characterId={character.id} />
       break
@@ -248,7 +258,6 @@ function OverviewSection({ character }: { character: PublicCharacterDetail }) {
   const { gameId } = useParams<{ gameId: string }>()
 
   const [scores, setScores] = useState<PublicCharacterAbilityScore[] | null>(null)
-  const [stats, setStats] = useState<PublicCharacterCalculatedStat[] | null>(null)
   const [resources, setResources] = useState<PublicCharacterResource[] | null>(null)
   const [auras, setAuras] = useState<PublicCharacterActiveAura[] | null>(null)
   const [guild, setGuild] = useState<PublicCharacterGuild | null | undefined>(undefined)
@@ -257,9 +266,6 @@ function OverviewSection({ character }: { character: PublicCharacterDetail }) {
     let cancelled = false
     getPublicCharacterAbilityScores(characterId).then((rows) => {
       if (!cancelled) setScores(rows)
-    })
-    getPublicCharacterCalculatedStats(characterId).then((rows) => {
-      if (!cancelled) setStats(rows)
     })
     getPublicCharacterResources(characterId).then((rows) => {
       if (!cancelled) setResources(rows)
@@ -277,66 +283,14 @@ function OverviewSection({ character }: { character: PublicCharacterDetail }) {
 
   return (
     <>
+      <ProfileCard character={character} guild={guild} gameId={gameId} />
+
       <section className="settings-section">
         <header className="settings-section-header">
-          <h2>Profile</h2>
+          <h2>Ability Scores</h2>
+          <p>Click a card for the source breakdown and full driver list.</p>
         </header>
-        <dl className="info-grid">
-          <dt>Name</dt>
-          <dd>{character.character_name}</dd>
-
-          <dt>Race</dt>
-          <dd>{capitalize(character.race)}</dd>
-
-          <dt>Level</dt>
-          <dd>{character.level}</dd>
-
-          <dt>Created</dt>
-          <dd>
-            {formatRelativeShort(character.created_at)} ago
-            {' · '}
-            <span className="text-dim">
-              {new Date(character.created_at).toLocaleDateString()}
-            </span>
-          </dd>
-
-          <dt>Alignment</dt>
-          <dd>{character.alignment_id ? capitalize(character.alignment_id) : '—'}</dd>
-
-          <dt>Realm</dt>
-          <dd>{character.realm_name ?? '—'}</dd>
-
-          <dt>Last Zone</dt>
-          <dd>{character.last_zone || '—'}</dd>
-
-          <dt>Guild</dt>
-          <dd>
-            {guild === undefined ? (
-              <span className="text-dim">Loading…</span>
-            ) : guild === null ? (
-              '—'
-            ) : (
-              <>
-                {gameId ? (
-                  <Link
-                    to={`/g/${gameId}/guilds/${guild.guild_id}`}
-                    className="character-back-link"
-                  >
-                    {guild.guild_name}
-                  </Link>
-                ) : (
-                  guild.guild_name
-                )}
-                <span className="text-dim">
-                  {' · '}
-                  {guild.rank_name}
-                  {' · '}
-                  {guild.member_count} member{guild.member_count === 1 ? '' : 's'}
-                </span>
-              </>
-            )}
-          </dd>
-        </dl>
+        <AbilityScoresGrid scores={scores} />
       </section>
 
       <section className="settings-section">
@@ -345,22 +299,6 @@ function OverviewSection({ character }: { character: PublicCharacterDetail }) {
           <p>Click a row for the base / abilities / aura breakdown.</p>
         </header>
         <ResourcesTable resources={resources} />
-      </section>
-
-      <section className="settings-section">
-        <header className="settings-section-header">
-          <h2>Ability Scores</h2>
-          <p>Click a row for the source breakdown and full driver list.</p>
-        </header>
-        <AbilityScoresTable scores={scores} />
-      </section>
-
-      <section className="settings-section">
-        <header className="settings-section-header">
-          <h2>Stats</h2>
-          <p>Click a row for the per-point conversion details.</p>
-        </header>
-        <StatsTable stats={stats} />
       </section>
 
       <section className="settings-section">
@@ -383,6 +321,206 @@ function OverviewSection({ character }: { character: PublicCharacterDetail }) {
   )
 }
 
+// New top-of-page identity card. Replaces the old "Profile" definition list
+// with a horizontal layout: name + lv/race subtitle on the left, secondary
+// metadata (alignment, realm, zone, created) inline as compact pills, and a
+// guild "card" anchored bottom-right when present.
+function ProfileCard({
+  character,
+  guild,
+  gameId,
+}: {
+  character: PublicCharacterDetail
+  guild: PublicCharacterGuild | null | undefined
+  gameId: string | undefined
+}) {
+  const facts: { label: string; value: ReactNode }[] = []
+  if (character.alignment_id) {
+    facts.push({ label: 'Alignment', value: capitalize(character.alignment_id) })
+  }
+  if (character.realm_name) {
+    facts.push({ label: 'Realm', value: character.realm_name })
+  }
+  facts.push({
+    label: 'Created',
+    value: (
+      <>
+        {formatRelativeShort(character.created_at)} ago
+        <span className="text-dim">
+          {' · '}
+          {new Date(character.created_at).toLocaleDateString()}
+        </span>
+      </>
+    ),
+  })
+
+  return (
+    <section className="profile-card">
+      <div className="profile-card-main">
+        <h2 className="profile-card-name">{character.character_name}</h2>
+        <div className="profile-card-subtitle">
+          Lv {character.level} {capitalize(character.race)}
+        </div>
+        <ul className="profile-card-facts">
+          {facts.map((f) => (
+            <li key={f.label}>
+              <span className="profile-card-fact-label">{f.label}</span>
+              <span className="profile-card-fact-value">{f.value}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <ProfileGuildBadge guild={guild} gameId={gameId} />
+    </section>
+  )
+}
+
+function ProfileGuildBadge({
+  guild,
+  gameId,
+}: {
+  guild: PublicCharacterGuild | null | undefined
+  gameId: string | undefined
+}) {
+  if (guild === undefined) {
+    return <div className="profile-card-guild text-dim">Loading guild…</div>
+  }
+  if (guild === null) {
+    return <div className="profile-card-guild text-dim">No guild</div>
+  }
+  const inner = (
+    <>
+      <div className="profile-card-guild-label">Guild</div>
+      <div className="profile-card-guild-name">{guild.guild_name}</div>
+      <div className="profile-card-guild-meta">
+        {guild.rank_name}
+        {' · '}
+        {guild.member_count} member{guild.member_count === 1 ? '' : 's'}
+      </div>
+    </>
+  )
+  return gameId ? (
+    <Link
+      to={`/g/${gameId}/guilds/${guild.guild_id}`}
+      className="profile-card-guild profile-card-guild-link"
+    >
+      {inner}
+    </Link>
+  ) : (
+    <div className="profile-card-guild">{inner}</div>
+  )
+}
+
+// 6-card D&D-style grid for ability scores. Each card shows the
+// abbreviation, big total, modifier badge, source breakdown, and the
+// list of derived effects. Click toggles the breakdown open like a
+// DataTable row.
+function AbilityScoresGrid({
+  scores,
+}: {
+  scores: PublicCharacterAbilityScore[] | null
+}) {
+  const [openId, setOpenId] = useState<string | null>(null)
+  if (scores === null) return <p className="text-dim">Loading…</p>
+  if (scores.length === 0) return <p className="text-dim">No ability scores set.</p>
+  return (
+    <div className="ability-grid">
+      {scores.map((s) => (
+        <AbilityScoreCard
+          key={s.ability}
+          score={s}
+          open={openId === s.ability}
+          onToggle={() => setOpenId((cur) => (cur === s.ability ? null : s.ability))}
+        />
+      ))}
+    </div>
+  )
+}
+
+function AbilityScoreCard({
+  score,
+  open,
+  onToggle,
+}: {
+  score: PublicCharacterAbilityScore
+  open: boolean
+  onToggle: () => void
+}) {
+  const total = Math.round(score.total_value)
+  const base = Math.round(score.base_value)
+  const eq = Math.round(score.equipment_bonus_value)
+  const au = Math.round(score.aura_bonus_value)
+  const mod = Math.floor((total - 10) / 2)
+  const drives = (ABILITY_DRIVES[score.ability] ?? [])
+    .map((fn) => fn(total))
+    .filter((d) => d.value !== 0)
+
+  // 3-letter D&D abbreviation; falls back to first 3 chars of slug when
+  // the ability name is non-standard.
+  const abbr = score.ability.slice(0, 3).toUpperCase()
+  const modClass =
+    mod > 0 ? 'ability-card-mod-pos' : mod < 0 ? 'ability-card-mod-neg' : ''
+
+  return (
+    <button
+      type="button"
+      className={`ability-card${open ? ' ability-card-open' : ''}`}
+      onClick={onToggle}
+      aria-expanded={open}
+    >
+      <AbilityIcon name={score.ability} />
+      <div className="ability-card-abbr">{abbr}</div>
+      <div className="ability-card-name">{score.display_name ?? score.ability}</div>
+      <div className="ability-card-score">{total}</div>
+      <div className={`ability-card-mod ${modClass}`}>
+        {mod >= 0 ? `+${mod}` : mod}
+      </div>
+      {open && (
+        <div className="ability-card-detail">
+          <div className="ability-card-sources">
+            <span>Base {base}</span>
+            {eq !== 0 && <span>{eq > 0 ? '+' : ''}{eq} gear</span>}
+            {au !== 0 && <span>{au > 0 ? '+' : ''}{au} aura</span>}
+          </div>
+          {drives.length > 0 ? (
+            <ul className="ability-card-drives">
+              {drives.map((d, i) => (
+                <li key={i}>{formatDrive(d)}</li>
+              ))}
+            </ul>
+          ) : (
+            <div className="ability-card-drives-empty">No active drives</div>
+          )}
+        </div>
+      )}
+    </button>
+  )
+}
+
+function StatsSection({ characterId }: { characterId: string }) {
+  const [stats, setStats] = useState<PublicCharacterCalculatedStat[] | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    getPublicCharacterCalculatedStats(characterId).then((rows) => {
+      if (!cancelled) setStats(rows)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [characterId])
+
+  return (
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Stats</h2>
+        <p>Click a row for the per-point conversion details.</p>
+      </header>
+      <StatsTable stats={stats} />
+    </section>
+  )
+}
+
 function ResourcesTable({
   resources,
 }: {
@@ -393,14 +531,12 @@ function ResourcesTable({
       id: 'name',
       header: 'Resource',
       cell: (r) => (
-        <span className="resource-name-cell">
-          <span
-            className="resource-color-dot"
-            style={{ background: r.display_color ?? 'var(--accent)' }}
-            aria-hidden="true"
-          />
-          {r.display_name ?? capitalize(r.type)}
-        </span>
+        <>
+          <ResourceIcon id={r.type} color={r.display_color} />
+          <span className="data-cell-name">
+            {r.display_name ?? capitalize(r.type)}
+          </span>
+        </>
       ),
       sortKey: (r) => r.sort_order ?? 999,
     },
@@ -497,134 +633,6 @@ function ResourcesTable({
   )
 }
 
-function AbilityScoresTable({
-  scores,
-}: {
-  scores: PublicCharacterAbilityScore[] | null
-}) {
-  const columns: DataTableColumn<PublicCharacterAbilityScore>[] = [
-    {
-      id: 'name',
-      header: 'Ability',
-      cell: (s) => s.display_name ?? s.ability,
-      sortKey: (s) => (s.display_name ?? s.ability).toLowerCase(),
-    },
-    {
-      id: 'score',
-      header: 'Score',
-      cell: (s) => {
-        const total = Math.round(s.total_value)
-        const mod = Math.floor((total - 10) / 2)
-        return (
-          <span>
-            {total}{' '}
-            <span className="stat-mod">{mod >= 0 ? `+${mod}` : mod}</span>
-          </span>
-        )
-      },
-      sortKey: (s) => s.total_value,
-      align: 'right',
-    },
-    {
-      id: 'drives',
-      header: 'Drives',
-      cell: (s) => {
-        const total = Math.round(s.total_value)
-        const drives = (ABILITY_DRIVES[s.ability] ?? [])
-          .map((fn) => fn(total))
-          .filter((d) => d.value !== 0)
-        if (drives.length === 0) return '—'
-        const shown = drives.slice(0, 2).map(formatDrive).join(', ')
-        const extra = drives.length > 2 ? ` +${drives.length - 2} more` : ''
-        return `${shown}${extra}`
-      },
-      align: 'right',
-    },
-  ]
-
-  return (
-    <DataTable<PublicCharacterAbilityScore>
-      rows={scores}
-      columns={columns}
-      rowKey={(s) => s.ability}
-      emptyText="No ability scores set."
-      expandedContent={(s) => {
-        const total = Math.round(s.total_value)
-        const base = Math.round(s.base_value)
-        const eq = Math.round(s.equipment_bonus_value)
-        const au = Math.round(s.aura_bonus_value)
-        const mod = Math.floor((total - 10) / 2)
-        const drives = (ABILITY_DRIVES[s.ability] ?? [])
-          .map((fn) => fn(total))
-          .filter((d) => d.value !== 0)
-        return (
-          <dl className="data-expansion">
-            <dt>Ability</dt>
-            <dd>
-              <code className="data-table-mono">{s.ability}</code>
-            </dd>
-            <dt>Total</dt>
-            <dd>
-              {total} <span className="text-dim">(modifier {mod >= 0 ? `+${mod}` : mod})</span>
-            </dd>
-            <dt>Base</dt>
-            <dd>{base}</dd>
-            {eq !== 0 && (
-              <>
-                <dt>Equipment</dt>
-                <dd
-                  className={
-                    eq > 0 ? 'data-expansion-positive' : 'data-expansion-negative'
-                  }
-                >
-                  {eq > 0 ? '+' : ''}
-                  {eq}
-                </dd>
-              </>
-            )}
-            {au !== 0 && (
-              <>
-                <dt>Aura</dt>
-                <dd
-                  className={
-                    au > 0 ? 'data-expansion-positive' : 'data-expansion-negative'
-                  }
-                >
-                  {au > 0 ? '+' : ''}
-                  {au}
-                </dd>
-              </>
-            )}
-            {drives.length > 0 && (
-              <>
-                <dt>Drives</dt>
-                <dd>
-                  <ul className="data-expansion-list">
-                    {drives.map((d, i) => (
-                      <li
-                        key={i}
-                        className={
-                          d.value > 0
-                            ? 'data-expansion-positive'
-                            : d.value < 0
-                              ? 'data-expansion-negative'
-                              : ''
-                        }
-                      >
-                        {formatDrive(d)}
-                      </li>
-                    ))}
-                  </ul>
-                </dd>
-              </>
-            )}
-          </dl>
-        )
-      }}
-    />
-  )
-}
-
 function StatsTable({
   stats,
 }: {
@@ -632,16 +640,21 @@ function StatsTable({
 }) {
   const columns: DataTableColumn<PublicCharacterCalculatedStat>[] = [
     {
+      id: 'name',
+      header: 'Stat',
+      cell: (s) => (
+        <>
+          <StatIcon category={s.category} />
+          <span className="data-cell-name">{s.display_name}</span>
+        </>
+      ),
+      sortKey: (s) => s.display_name.toLowerCase(),
+    },
+    {
       id: 'category',
       header: 'Category',
       cell: (s) => s.category,
       sortKey: (s) => s.category.toLowerCase(),
-    },
-    {
-      id: 'name',
-      header: 'Stat',
-      cell: (s) => s.display_name,
-      sortKey: (s) => s.display_name.toLowerCase(),
     },
     {
       id: 'value',
@@ -656,16 +669,6 @@ function StatsTable({
         )
       },
       sortKey: (s) => s.value,
-      align: 'right',
-    },
-    {
-      id: 'effect',
-      header: 'Effect',
-      cell: (s) => {
-        const isZero = Math.round(s.value * 10) === 0
-        const effect = describeStatEffect(s.value, s.conversion_per_point)
-        return (!isZero && effect ? effect.formatted : s.affects) || '—'
-      },
       align: 'right',
     },
   ]
@@ -727,6 +730,7 @@ function StatsTable({
 const HIDDEN_EQUIP_SLOTS = new Set(['InventoryOnly'])
 
 function EquipmentSection({ characterId }: { characterId: string }) {
+  const { gameId } = useParams<{ gameId: string }>()
   const [equipment, setEquipment] = useState<PublicCharacterEquipmentSlot[] | null>(
     null,
   )
@@ -796,7 +800,15 @@ function EquipmentSection({ characterId }: { characterId: string }) {
     {
       id: 'slot',
       header: 'Slot',
-      cell: (e) => slotById.get(e.slot)?.display_name ?? e.slot,
+      cell: (e) => {
+        const slot = slotById.get(e.slot)
+        return (
+          <>
+            <InventorySlotIcon id={e.slot} region={slot?.body_region} />
+            {slot?.display_name ?? e.slot}
+          </>
+        )
+      },
       sortKey: (e) => SLOT_ORDER[e.slot] ?? 999,
     },
     {
@@ -804,13 +816,16 @@ function EquipmentSection({ characterId }: { characterId: string }) {
       header: 'Item',
       cell: (e) =>
         e.item_id ? (
-          <span
-            style={{
-              color: e.item_rarity ? RARITY_COLORS[e.item_rarity] : undefined,
-            }}
-          >
-            {e.item_name ?? e.item_id}
-          </span>
+          <>
+            <ItemIcon id={e.item_id} rarity={e.item_rarity} />
+            <span
+              style={{
+                color: e.item_rarity ? RARITY_COLORS[e.item_rarity] : undefined,
+              }}
+            >
+              {e.item_name ?? e.item_id}
+            </span>
+          </>
         ) : (
           <span className="text-dim">Empty</span>
         ),
@@ -862,6 +877,7 @@ function EquipmentSection({ characterId }: { characterId: string }) {
                 subclass,
                 itemClass: subclass ? classById.get(subclass.item_class) : undefined,
               })}
+              viewHref={gameId ? `/g/${gameId}/items/${e.item_id}` : undefined}
             />
           )
         }}
@@ -984,7 +1000,10 @@ function SkillTable({ skills }: { skills: PublicCharacterSkill[] }) {
       <tbody>
         {skills.map((s) => (
           <tr key={s.skill}>
-            <td>{s.display_name ?? s.skill}</td>
+            <td>
+              <SkillIcon name={s.skill} category={s.category} />
+              {s.display_name ?? s.skill}
+            </td>
             <td>{s.level}</td>
             <td>{s.current_xp.toLocaleString()}</td>
           </tr>

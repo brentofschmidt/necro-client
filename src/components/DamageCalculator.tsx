@@ -1,6 +1,8 @@
-import { ReactNode, useEffect, useMemo, useState } from 'react'
+import { Fragment, ReactNode, useEffect, useMemo, useState } from 'react'
 import {
   Action,
+  ActionEffectDamageOverTime,
+  asDamageOverTimeEffect,
   getPublicCharacter,
   getPublicCharacterAbilityScores,
   getPublicCharacterCalculatedStats,
@@ -18,7 +20,6 @@ import {
   PublicCharacterSkill,
   Skill,
 } from '../lib/necroContent'
-import { DamageConstantsLegend } from './DamageFlowchart'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DamageCalculator — a dev/debug page that walks through the math behind a
@@ -167,14 +168,21 @@ function statContributionsFromAbilities(a: {
   const intBase = f((a.intelligence - 10) / 2)
   const wisBase = f((a.wisdom - 10) / 2)
   const conBase = f((a.constitution - 10) / 2)
+  const chaBase = f((a.charisma - 10) / 2)
+  // CHA contributes a half-share to heal_crit (per 4 points above 10),
+  // alongside WIS as the primary driver. Matches the RPC CASE arm in
+  // migration 0072.
+  const chaHalfBase = f((a.charisma - 10) / 4)
   return {
     attack_power: a.strength * 2,
     spell_power: a.intelligence * 2,
     healing_power: a.wisdom * 2,
-    crit_damage: 50,
+    // CHA-driven crit damage on top of the 50 baseline (migration 0072).
+    crit_damage: 50 + chaBase,
     crit_chance: dexBase,
     spell_crit: intBase,
-    heal_crit: wisBase,
+    // WIS primary + CHA half-share (migration 0072).
+    heal_crit: wisBase + chaHalfBase,
     haste: f(a.dexterity / 4),
     attack_speed: f(a.dexterity / 4),
     movement_speed: f(a.dexterity / 5),
@@ -196,9 +204,10 @@ function statContributionsFromAbilities(a: {
     mana_regen: f(a.wisdom / 4),
     health_regen: f(a.constitution / 5),
     // dodge_chance / parry_chance / hit_chance / spell_hit — dropped in
-    // 0069 (renamed / collapsed into the new symmetric pair). STR no
-    // longer contributes to physical accuracy; CHA no longer contributes
-    // to spell accuracy.
+    // 0070 (renamed / collapsed into the new symmetric pair). STR no
+    // longer contributes to physical accuracy. CHA got rewired in 0072:
+    // it owns crit_damage (primary, +0.5%/pt) and contributes a half-
+    // share to heal_crit (+0.25%/pt) on top of WIS's primary share.
   }
 }
 
@@ -320,6 +329,37 @@ function normaliseEffects(ability: Action): CalcEffect[] {
 // of school.
 function effectIsMagic(effect: CalcEffect): boolean {
   return !!effect.school && effect.school !== 'physical'
+}
+
+// DamageOverTime effects (bleeds, burns, poisons) are surfaced separately
+// from the per-cast Damage/Heal pipeline. Each entry in the spell's
+// effects array with type 'DamageOverTime' becomes one row in the DOT
+// section below the main pipeline output.
+type CalcDotEffect = ActionEffectDamageOverTime & {
+  // For sort stability and React keys when multiple DOTs are present.
+  index: number
+}
+
+function normaliseDotEffects(ability: Action): CalcDotEffect[] {
+  const out: CalcDotEffect[] = []
+  let idx = 0
+  for (const eff of ability.effects ?? []) {
+    const parsed = asDamageOverTimeEffect(eff)
+    if (!parsed) continue
+    // Apply the parent-action damage_school as a default the same way
+    // normaliseEffects does, so a DOT without an explicit school still
+    // routes correctly.
+    out.push({
+      ...parsed,
+      school: parsed.school || ability.damage_school || 'physical',
+      index: idx++,
+    })
+  }
+  return out
+}
+
+function dotIsMagic(eff: CalcDotEffect): boolean {
+  return !!eff.school && eff.school !== 'physical'
 }
 
 // Splits an ability's calculable effects into groups keyed by `target`
@@ -507,8 +547,6 @@ export function DamageCalculator() {
           equipment + active auras.
         </p>
       </header>
-
-      <DamageConstantsLegend />
 
       <div className="dmg-pickers">
         <PickerCard title="Attacker" tone="attacker">
@@ -1185,6 +1223,15 @@ type Step = {
   // in the steps view but shouldn't pollute "did the cast hit / crit the
   // picked defender" tallies above the histogram.
   group?: string
+  // Per-effect substep metadata. When set, the step belongs to a specific
+  // Damage/Heal effect inside a group and the renderer wraps consecutive
+  // same-effect steps in a card with `effectLabel` as the header. The
+  // `substepTitle` is the short label used inside the card (e.g. "base",
+  // "damage roll") so the "Effect N: description" prefix doesn't repeat
+  // on every row.
+  effectIndex?: number
+  effectLabel?: string
+  substepTitle?: string
 }
 
 type PipelineOpts = {
@@ -1543,6 +1590,9 @@ function buildPipelineRollFirst(
         ),
         output: value,
         group: group.target,
+        effectIndex: eff.index,
+        effectLabel: effLabel,
+        substepTitle: 'base',
       })
 
       // Damage roll (roll-first: happens before crit/mit). Uniform
@@ -1570,6 +1620,9 @@ function buildPipelineRollFirst(
           output: sample,
           range: effRange,
           group: group.target,
+          effectIndex: eff.index,
+          effectLabel: effLabel,
+          substepTitle: 'damage roll',
         })
         value = sample
       }
@@ -1597,6 +1650,9 @@ function buildPipelineRollFirst(
           output: value,
           range: effRange ?? undefined,
           group: group.target,
+          effectIndex: eff.index,
+          effectLabel: effLabel,
+          substepTitle: 'crit applied',
         })
       }
 
@@ -1622,6 +1678,9 @@ function buildPipelineRollFirst(
           output: value,
           range: effRange ?? undefined,
           group: group.target,
+          effectIndex: eff.index,
+          effectLabel: effLabel,
+          substepTitle: 'block applied',
         })
       }
 
@@ -1662,6 +1721,9 @@ function buildPipelineRollFirst(
           output: value,
           range: effRange ?? undefined,
           group: group.target,
+          effectIndex: eff.index,
+          effectLabel: effLabel,
+          substepTitle: `${effIsMagic ? 'magic resist' : 'armor'} mitigation`,
         })
       }
 
@@ -1871,6 +1933,9 @@ function buildPipelineRollLast(
         ),
         output: value,
         group: group.target,
+        effectIndex: eff.index,
+        effectLabel: effLabel,
+        substepTitle: 'base',
       })
 
       // Crit applied (uses THIS group's isCrit)
@@ -1887,6 +1952,9 @@ function buildPipelineRollLast(
           ),
           output: value,
           group: group.target,
+          effectIndex: eff.index,
+          effectLabel: effLabel,
+          substepTitle: 'crit applied',
         })
       }
 
@@ -1904,6 +1972,9 @@ function buildPipelineRollLast(
           ),
           output: value,
           group: group.target,
+          effectIndex: eff.index,
+          effectLabel: effLabel,
+          substepTitle: 'block applied',
         })
       }
 
@@ -1938,6 +2009,9 @@ function buildPipelineRollLast(
           ),
           output: value,
           group: group.target,
+          effectIndex: eff.index,
+          effectLabel: effLabel,
+          substepTitle: `${effIsMagic ? 'magic resist' : 'armor'} mitigation`,
         })
       }
 
@@ -1969,6 +2043,9 @@ function buildPipelineRollLast(
           output: sample,
           range: effRange,
           group: group.target,
+          effectIndex: eff.index,
+          effectLabel: effLabel,
+          substepTitle: 'damage roll',
         })
         value = sample
       }
@@ -2303,61 +2380,504 @@ function Pipeline({
           </div>
         </div>
       )}
-      {steps.map((step, i) => {
-        // Tag attack-outcome labels with side-border accents so the pipeline
-        // reads at a glance: green = lands cleanly, gold = crit, red-ish =
-        // partial mitigation (block), grey = whiffed (miss/dodge/parry).
-        const outcomeClass =
-          step.outputLabel === 'FINAL'
-            ? ' dmg-step-final'
-            : step.outputLabel === 'CRIT'
-              ? ' dmg-step-crit'
-              : step.outputLabel === 'MISS' ||
-                  step.outputLabel === 'DODGE' ||
-                  step.outputLabel === 'PARRY'
-                ? ' dmg-step-miss'
-                : step.outputLabel === 'BLOCK'
-                  ? ' dmg-step-block'
-                  : step.outputLabel === 'HIT'
-                    ? ' dmg-step-hit'
-                    : ''
-        return (
-        <div
-          key={i}
-          className={`dmg-step${outcomeClass}`}
-        >
-          <div className="dmg-step-title">
-            {step.title}
-            {step.outputLabel && step.outputLabel !== 'FINAL' && (
-              <span className="dmg-step-tag">{step.outputLabel}</span>
-            )}
-          </div>
-          <div className="dmg-step-inputs">{step.inputs}</div>
-          <div className="dmg-step-formula">{step.formula}</div>
-          {step.range && (
-            <div className="dmg-step-range">
-              Bell window: <strong>{step.range.min}</strong> –{' '}
-              <strong>{step.range.max}</strong> · Peak{' '}
-              <strong>{step.range.mean}</strong>
-            </div>
-          )}
-          <div className="dmg-step-output">
-            {step.outputLabel === 'FINAL' ? '→ ' : '= '}
-            <strong>{fmt(step.output)}</strong>
-            {step.range && step.outputLabel === 'FINAL' && (
-              <span className="dmg-step-note"> · rolled</span>
-            )}
-            {step.skipped && (
-              <span className="dmg-step-note"> · {step.skipped}</span>
-            )}
-          </div>
-        </div>
-        )
-      })}
+      <PipelineSteps steps={steps} />
+      <DotEffectsPanel
+        attacker={attacker}
+        defender={defender}
+        spell={spell}
+        skillsCatalog={skillsCatalog}
+        powerCoefficient={powerCoefficient}
+        attackerOv={attackerOv}
+        defenderOv={defenderOv}
+        attackerAbilityOv={attackerAbilityOv}
+        defenderAbilityOv={defenderAbilityOv}
+        proficiencyOv={proficiencyOv}
+        rollSeed={rollSeed}
+      />
       <div className="dmg-pipeline-toolbar">
         <button type="button" className="dmg-reroll" onClick={onReroll}>
           Reroll single pipeline
         </button>
+      </div>
+    </div>
+  )
+}
+
+// Renders the per-step list with two levels of grouping:
+//
+//   Outer (group card): consecutive steps sharing the same `group` field
+//     (Hit roll + Block roll + Crit roll + effect substeps + Subtotal)
+//     wrap in a labelled "group" panel. Skipped when only one group
+//     exists — single-target single-effect abilities don't need the
+//     extra nesting depth.
+//
+//   Inner (effect card): inside each group, consecutive substeps sharing
+//     the same `effectIndex` wrap in a labelled "effect" panel.
+//
+// Steps with no `group` field (Final damage/heal) render bare between
+// or after the group cards.
+//
+// The two-level structure mirrors the pipeline's actual semantics:
+// ability → target groups (own Hit/Block/Crit rolls) → effects (per-
+// effect base/roll/crit/mit). Effects in the same group share their
+// hit / crit / block rolls — the visual nesting makes that obvious.
+function PipelineSteps({ steps }: { steps: Step[] }) {
+  const groupNames = new Set<string>()
+  for (const s of steps) if (s.group) groupNames.add(s.group)
+  const useGroupCards = groupNames.size > 1
+
+  type Run =
+    | { kind: 'group'; target: string; steps: Step[] }
+    | { kind: 'bare'; step: Step }
+  const runs: Run[] = []
+  let cur: { kind: 'group'; target: string; steps: Step[] } | null = null
+
+  for (const step of steps) {
+    if (step.group) {
+      if (cur && cur.target === step.group) {
+        cur.steps.push(step)
+      } else {
+        cur = { kind: 'group', target: step.group, steps: [step] }
+        runs.push(cur)
+      }
+    } else {
+      cur = null
+      runs.push({ kind: 'bare', step })
+    }
+  }
+
+  return (
+    <>
+      {runs.map((run, i) => {
+        if (run.kind === 'bare') {
+          return <StepCard key={`b-${i}`} step={run.step} compact={false} />
+        }
+        const inner = renderGroupInner(run.steps, useGroupCards)
+        if (!useGroupCards) {
+          return <Fragment key={`g-${i}`}>{inner}</Fragment>
+        }
+        const isPrimary = run.target === 'Primary'
+        const tone: 'primary' | 'splash' = isPrimary ? 'primary' : 'splash'
+        return (
+          <div
+            key={`g-${i}`}
+            className={`dmg-group-card dmg-group-card-${tone}`}
+          >
+            <div className="dmg-group-card-head">
+              <span className="dmg-group-card-badge">group</span>
+              <span className="dmg-group-card-label">→ {run.target}</span>
+              <span className="dmg-group-card-note">
+                {isPrimary
+                  ? 'applied to defender'
+                  : 'splash — other targets'}
+              </span>
+            </div>
+            <div className="dmg-group-card-body">{inner}</div>
+          </div>
+        )
+      })}
+    </>
+  )
+}
+
+// Builds the inner content for one group: per-effect substeps wrap in
+// effect cards, the surrounding shared-roll / subtotal steps render
+// flat. `inGroupCard` controls whether the effect cards still display
+// the "→ <group>" pill in their header — redundant when the outer
+// group card already labels the group.
+function renderGroupInner(steps: Step[], inGroupCard: boolean): ReactNode[] {
+  const nodes: ReactNode[] = []
+  let cardSteps: Step[] = []
+  let cardKey: string | null = null
+
+  function flushCard() {
+    if (cardSteps.length === 0) return
+    const first = cardSteps[0]
+    const tone: 'physical' | 'magical' = (() => {
+      for (const s of cardSteps) {
+        if (s.substepTitle === 'magic resist mitigation') return 'magical'
+        if (s.substepTitle === 'armor mitigation') return 'physical'
+      }
+      return 'physical'
+    })()
+    nodes.push(
+      <div
+        key={`card-${cardKey}`}
+        className={`dmg-effect-card dmg-effect-card-${tone}`}
+      >
+        <div className="dmg-effect-card-head">
+          <span className="dmg-effect-card-badge">effect</span>
+          <span className="dmg-effect-card-label">{first.effectLabel}</span>
+          {!inGroupCard && first.group && first.group !== 'Primary' && (
+            <span className="dmg-effect-card-group">→ {first.group}</span>
+          )}
+        </div>
+        <div className="dmg-effect-card-body">
+          {cardSteps.map((step, i) => (
+            <StepCard key={i} step={step} compact />
+          ))}
+        </div>
+      </div>,
+    )
+    cardSteps = []
+    cardKey = null
+  }
+
+  steps.forEach((step, i) => {
+    const key =
+      step.effectIndex !== undefined
+        ? `${step.group ?? ''}#${step.effectIndex}`
+        : null
+    if (key !== null && key === cardKey) {
+      cardSteps.push(step)
+      return
+    }
+    flushCard()
+    if (key !== null) {
+      cardKey = key
+      cardSteps.push(step)
+    } else {
+      nodes.push(<StepCard key={`s-${i}`} step={step} compact={false} />)
+    }
+  })
+  flushCard()
+
+  return nodes
+}
+
+function StepCard({ step, compact }: { step: Step; compact: boolean }) {
+  // Tag attack-outcome labels with side-border accents so the pipeline
+  // reads at a glance: green = lands cleanly, gold = crit, red-ish =
+  // partial mitigation (block), grey = whiffed (miss/dodge/parry).
+  const outcomeClass =
+    step.outputLabel === 'FINAL'
+      ? ' dmg-step-final'
+      : step.outputLabel === 'CRIT'
+        ? ' dmg-step-crit'
+        : step.outputLabel === 'MISS' ||
+            step.outputLabel === 'DODGE' ||
+            step.outputLabel === 'PARRY'
+          ? ' dmg-step-miss'
+          : step.outputLabel === 'BLOCK'
+            ? ' dmg-step-block'
+            : step.outputLabel === 'HIT'
+              ? ' dmg-step-hit'
+              : ''
+  // Inside an effect card, strip the "Effect N: label —" prefix from the
+  // title — the card header already shows that. Keep the leading step
+  // number ("5. ") so cross-references still work. Out-of-card steps
+  // render the full title verbatim.
+  const displayTitle = (() => {
+    if (!compact || !step.substepTitle) return step.title
+    const numMatch = step.title.match(/^(\d+\.)/)
+    return numMatch ? `${numMatch[1]} ${step.substepTitle}` : step.substepTitle
+  })()
+  return (
+    <div className={`dmg-step${outcomeClass}${compact ? ' dmg-step-compact' : ''}`}>
+      <div className="dmg-step-title">
+        {displayTitle}
+        {step.outputLabel && step.outputLabel !== 'FINAL' && (
+          <span className="dmg-step-tag">{step.outputLabel}</span>
+        )}
+      </div>
+      <div className="dmg-step-inputs">{step.inputs}</div>
+      <div className="dmg-step-formula">{step.formula}</div>
+      {step.range && (
+        <div className="dmg-step-range">
+          Bell window: <strong>{step.range.min}</strong> –{' '}
+          <strong>{step.range.max}</strong> · Peak{' '}
+          <strong>{step.range.mean}</strong>
+        </div>
+      )}
+      <div className="dmg-step-output">
+        {step.outputLabel === 'FINAL' ? '→ ' : '= '}
+        <strong>{fmt(step.output)}</strong>
+        {step.range && step.outputLabel === 'FINAL' && (
+          <span className="dmg-step-note"> · rolled</span>
+        )}
+        {step.skipped && (
+          <span className="dmg-step-note"> · {step.skipped}</span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Per-DOT-effect breakdown rendered below the main pipeline. Each row
+// reads as: "<description> — N ticks · interval s · duration s · per-tick
+// min/mean/max · total min/mean/max". Each tick goes through the same
+// power-stat scaling → mitigation → proficiency-floor pipeline as a
+// regular Damage effect; crit applies per-tick at runtime but isn't
+// rolled here (the section shows expected per-tick before crit). Heals
+// and instant Damage effects are excluded — they're in the main steps.
+type DotSummary = {
+  description: string
+  school: string
+  isMagic: boolean
+  ticks: number
+  tickInterval: number
+  duration: number
+  perTickMin: number
+  perTickMean: number
+  perTickMax: number
+  totalMin: number
+  totalMean: number
+  totalMax: number
+  // Concretely-rolled value per tick — uniform(perTickMin, perTickMax)
+  // sampled once for each tick, in order, mirroring the runtime DOT
+  // resolution. Length equals `ticks`. Feeds the timeline visualization
+  // so the user can see what an actual roll-out of this DOT looks like.
+  samples: number[]
+  totalRolled: number
+}
+
+function computeDotSummaries(
+  attacker: SimpleCharacter,
+  defender: SimpleCharacter,
+  spell: Action,
+  skillsCatalog: Skill[] | null,
+  opts: {
+    powerCoefficient: number
+    attackerOv: StatOverrides
+    defenderOv: StatOverrides
+    attackerAbilityOv: StatOverrides
+    defenderAbilityOv: StatOverrides
+    proficiencyOv: number | undefined
+  },
+): DotSummary[] {
+  const dotEffects = normaliseDotEffects(spell)
+  if (dotEffects.length === 0) return []
+
+  // Proficiency floor — same math as the main pipeline (see lines around
+  // FLOOR_CAP usage in buildPipelineRollFirst). The floor scales the
+  // bottom of each tick's uniform roll: tick ∈ [floor·base, base].
+  const fetchedProf = proficiencyLevelFor(attacker, spell, skillsCatalog)
+  const effLevel = Number.isFinite(opts.proficiencyOv)
+    ? (opts.proficiencyOv as number)
+    : (fetchedProf?.level ?? 0)
+  const profFloor =
+    Math.max(0, Math.min(1, effLevel / MAX_SKILL_LEVEL)) * FLOOR_CAP
+
+  return dotEffects.map((eff) => {
+    const isMagic = dotIsMagic(eff)
+    const powerStat = isMagic ? 'spell_power' : 'attack_power'
+    const power = effStat(
+      attacker.stats,
+      powerStat,
+      opts.attackerOv,
+      attacker.abilities,
+      opts.attackerAbilityOv,
+    )
+    const base = power * eff.coefficient * opts.powerCoefficient
+
+    // Mitigation: same K/(K+stat) curve the main pipeline uses for
+    // single-instance hits. DOT ticks against a target with high armor
+    // get scaled down proportionally each tick.
+    const mitStat = isMagic ? 'magic_resist' : 'armor'
+    const mitValue = effStat(
+      defender.stats,
+      mitStat,
+      opts.defenderOv,
+      defender.abilities,
+      opts.defenderAbilityOv,
+    )
+    const mitMult = MITIGATION_K / (MITIGATION_K + mitValue)
+    const tickAfterMit = base * mitMult
+
+    // Proficiency-roll envelope on the post-mitigation tick value. min 1
+    // is enforced like the main pipeline so a fully-mitigated DOT still
+    // chips for at least 1 per tick.
+    const perTickMax = Math.max(1, Math.ceil(tickAfterMit))
+    const perTickMin = Math.max(1, Math.ceil(tickAfterMit * profFloor))
+    const perTickMean = Math.max(
+      1,
+      Math.ceil((perTickMin + perTickMax) / 2),
+    )
+
+    const ticks = Math.max(1, Math.floor(eff.duration / eff.tick_interval))
+
+    // Sample each tick uniformly on [perTickMin, perTickMax] so the
+    // timeline shows a concrete roll-out rather than just the expected
+    // envelope. Each tick rolls independently — bleeds aren't correlated
+    // tick-to-tick.
+    const span = Math.max(0, perTickMax - perTickMin)
+    const samples: number[] = new Array(ticks)
+    let totalRolled = 0
+    for (let i = 0; i < ticks; i++) {
+      const sample = Math.max(
+        1,
+        Math.round(perTickMin + Math.random() * span),
+      )
+      samples[i] = sample
+      totalRolled += sample
+    }
+
+    return {
+      description: eff.description,
+      school: eff.school,
+      isMagic,
+      ticks,
+      tickInterval: eff.tick_interval,
+      duration: eff.duration,
+      perTickMin,
+      perTickMean,
+      perTickMax,
+      totalMin: perTickMin * ticks,
+      totalMean: perTickMean * ticks,
+      totalMax: perTickMax * ticks,
+      samples,
+      totalRolled,
+    }
+  })
+}
+
+function DotEffectsPanel({
+  attacker,
+  defender,
+  spell,
+  skillsCatalog,
+  powerCoefficient,
+  attackerOv,
+  defenderOv,
+  attackerAbilityOv,
+  defenderAbilityOv,
+  proficiencyOv,
+  rollSeed,
+}: {
+  attacker: SimpleCharacter
+  defender: SimpleCharacter
+  spell: Action
+  skillsCatalog: Skill[] | null
+  powerCoefficient: number
+  attackerOv: StatOverrides
+  defenderOv: StatOverrides
+  attackerAbilityOv: StatOverrides
+  defenderAbilityOv: StatOverrides
+  proficiencyOv: number | undefined
+  rollSeed: number
+}) {
+  const summaries = useMemo(
+    () =>
+      computeDotSummaries(attacker, defender, spell, skillsCatalog, {
+        powerCoefficient,
+        attackerOv,
+        defenderOv,
+        attackerAbilityOv,
+        defenderAbilityOv,
+        proficiencyOv,
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      attacker, defender, spell, skillsCatalog, powerCoefficient,
+      attackerOv, defenderOv, attackerAbilityOv, defenderAbilityOv,
+      proficiencyOv,
+      // Including rollSeed so the existing "Reroll single pipeline"
+      // button also re-rolls the per-tick samples in the timeline.
+      rollSeed,
+    ],
+  )
+
+  if (summaries.length === 0) return null
+
+  return (
+    <div className="dmg-dot-panel">
+      <div className="dmg-dot-title">Damage-over-time effects</div>
+      <p className="dmg-dot-help">
+        Each tick is rolled independently on the same uniform[floor·max,
+        max] envelope as a single hit. Bars below show one concrete
+        roll-out — use Reroll single pipeline to resample. Crits apply
+        per-tick at runtime and aren't applied here.
+      </p>
+      {summaries.map((s, i) => (
+        <DotEffectRow key={i} summary={s} />
+      ))}
+    </div>
+  )
+}
+
+// One DOT effect rendered as a timeline of per-tick bars. Each tick is a
+// vertical column with the rolled damage on top, a fill bar in the
+// middle (height proportional to roll's position in the [floor, max]
+// envelope), and the time stamp below. School-themed bar color (red for
+// physical, blue for magical). Total rolled and expected envelope sit
+// alongside for quick comparison.
+function DotEffectRow({ summary: s }: { summary: DotSummary }) {
+  const schoolKind = s.isMagic ? 'magical' : 'physical'
+  const range = Math.max(1, s.perTickMax)
+  return (
+    <div className={`dmg-dot-row dmg-dot-row-${schoolKind}`}>
+      <div className="dmg-dot-desc">
+        {s.description}
+        <span className="dmg-dot-meta">
+          {' · '}
+          {s.school}
+          {' · '}
+          {s.ticks} ticks
+          {' · '}
+          {fmt(s.tickInterval)}s interval
+          {' · '}
+          {fmt(s.duration)}s total
+        </span>
+      </div>
+
+      <div className="dmg-dot-timeline" role="img" aria-label="DOT tick timeline">
+        <div className="dmg-dot-timeline-track">
+          {s.samples.map((sample, i) => {
+            const heightPct = Math.max(6, (sample / range) * 100)
+            // Intensity 0..1 of where the sample sits inside the per-tick
+            // envelope. Drives bar opacity / glow so a high-roll tick
+            // visually pops vs. a low-roll one even though the height
+            // already encodes magnitude.
+            const intensity =
+              s.perTickMax > s.perTickMin
+                ? (sample - s.perTickMin) /
+                  (s.perTickMax - s.perTickMin)
+                : 1
+            const tickTime = (i + 1) * s.tickInterval
+            return (
+              <div key={i} className="dmg-dot-tick" title={`Tick ${i + 1} · ${fmt(tickTime)}s`}>
+                <span className="dmg-dot-tick-value">{sample}</span>
+                <div className="dmg-dot-tick-column">
+                  <div
+                    className="dmg-dot-tick-bar"
+                    style={{
+                      height: `${heightPct}%`,
+                      opacity: 0.55 + 0.45 * Math.max(0, Math.min(1, intensity)),
+                    }}
+                  />
+                </div>
+                <span className="dmg-dot-tick-time">{fmt(tickTime)}s</span>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      <div className="dmg-dot-stats">
+        <div className="dmg-dot-stat dmg-dot-stat-rolled">
+          <span className="dmg-dot-stat-label">Total rolled</span>
+          <strong>{s.totalRolled}</strong>
+        </div>
+        <div className="dmg-dot-stat">
+          <span className="dmg-dot-stat-label">Per tick</span>
+          <strong>
+            {s.perTickMin}
+            {' / '}
+            <em>{s.perTickMean}</em>
+            {' / '}
+            {s.perTickMax}
+          </strong>
+        </div>
+        <div className="dmg-dot-stat">
+          <span className="dmg-dot-stat-label">Total envelope</span>
+          <strong>
+            {s.totalMin}
+            {' / '}
+            <em>{s.totalMean}</em>
+            {' / '}
+            {s.totalMax}
+          </strong>
+        </div>
       </div>
     </div>
   )
