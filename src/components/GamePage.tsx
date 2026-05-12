@@ -11,12 +11,13 @@ import { ResourceIcon } from './ResourceIcon'
 import { ItemIcon } from './ItemIcon'
 import { StatIcon } from './StatIcon'
 import { ActionIcon } from './ActionIcon'
+import { EffectsList } from './EffectsList'
+import { RARITY_COLORS } from './ItemDetails'
 import { DataTable, DataTableColumn } from './DataTable'
 import { ItemDetails, itemToDetailsData } from './ItemDetails'
 import {
   Ability,
   Action,
-  ActionEffect,
   Alignment,
   DamageType,
   Faction,
@@ -1568,66 +1569,6 @@ function ItemClassIcon({ itemClass }: { itemClass: string }) {
   )
 }
 
-// Renders the rich metadata of an action/spell effect as a compact
-// "Key: Value · Key: Value" row beneath the prose description. Knows how to
-// format common fields (amount-with-percent, radius-in-meters, etc.) and
-// quietly skips fields it doesn't recognise so a future effect type with a
-// new field still renders the basics.
-function EffectMeta({ effect }: { effect: ActionEffect }) {
-  const entries: Array<[string, string]> = []
-
-  if (typeof effect.type === 'string' && effect.type) {
-    entries.push(['Type', effect.type])
-  }
-  // Percentage-scaling coefficient (preferred for Damage / Heal effects
-  // post-migration 0065). Shown as "150% power" rather than a raw number
-  // so it reads as a scaling factor, not a flat amount.
-  if (typeof effect.coefficient === 'number') {
-    entries.push(['Scaling', `${(effect.coefficient * 100).toFixed(0)}% power`])
-  }
-  // Flat amount — only shown when no coefficient is set (i.e. legacy or
-  // truly-flat effects like StatModifier buffs).
-  if (
-    typeof effect.amount === 'number' &&
-    typeof effect.coefficient !== 'number'
-  ) {
-    const isPercent = effect.modifier_type === 'Percent'
-    entries.push(['Amount', `${effect.amount}${isPercent ? '%' : ''}`])
-  }
-  if (typeof effect.school === 'string' && effect.school) {
-    entries.push(['School', effect.school])
-  }
-  if (typeof effect.stat === 'string' && effect.stat) {
-    entries.push(['Stat', effect.stat])
-  }
-  if (typeof effect.target === 'string' && effect.target) {
-    entries.push(['Target', effect.target])
-  }
-  if (typeof effect.radius === 'number') {
-    entries.push(['Radius', `${effect.radius}m`])
-  }
-  if (typeof effect.duration === 'number') {
-    entries.push(['Duration', `${effect.duration}s`])
-  }
-
-  if (entries.length === 0) return null
-  return (
-    <div className="effect-meta">
-      {entries.map(([k, v], i) => (
-        <span key={k} className="effect-meta-pair">
-          <span className="effect-meta-key">{k}:</span>{' '}
-          <span className="effect-meta-value">{v}</span>
-          {i < entries.length - 1 && (
-            <span className="effect-meta-sep" aria-hidden="true">
-              ·
-            </span>
-          )}
-        </span>
-      ))}
-    </div>
-  )
-}
-
 function ItemClassesSection() {
   const classes = useAsyncList<ItemClass>(() => listItemClasses())
   const subclasses = useAsyncList<ItemSubclass>(() => listItemSubclasses())
@@ -1837,6 +1778,7 @@ function formatStation(tag: string): string {
 }
 
 function RecipesSection() {
+  const { gameId } = useParams<{ gameId: string }>()
   const recipes = useAsyncList<Recipe>(() => listRecipes())
   const items = useAsyncList<Item>(() => listItems())
 
@@ -1918,11 +1860,16 @@ function RecipesSection() {
               <>
                 <dt>Ingredients</dt>
                 <dd>
-                  <ul className="data-expansion-list">
+                  <ul className="recipe-item-list">
                     {r.ingredients.map((ing, i) => (
-                      <li key={i}>
-                        {ing.quantity}× {nameOf(ing.itemId)}
-                      </li>
+                      <RecipeItemRow
+                        key={i}
+                        gameId={gameId}
+                        itemId={ing.itemId}
+                        quantity={ing.quantity}
+                        name={nameOf(ing.itemId)}
+                        rarity={itemRarityById.get(ing.itemId)}
+                      />
                     ))}
                   </ul>
                 </dd>
@@ -1932,11 +1879,16 @@ function RecipesSection() {
               <>
                 <dt>Produces</dt>
                 <dd>
-                  <ul className="data-expansion-list">
+                  <ul className="recipe-item-list">
                     {r.outputs.map((out, i) => (
-                      <li key={i} className="data-expansion-positive">
-                        {out.quantity}× {nameOf(out.itemId)}
-                      </li>
+                      <RecipeItemRow
+                        key={i}
+                        gameId={gameId}
+                        itemId={out.itemId}
+                        quantity={out.quantity}
+                        name={nameOf(out.itemId)}
+                        rarity={itemRarityById.get(out.itemId)}
+                      />
                     ))}
                   </ul>
                 </dd>
@@ -1952,6 +1904,46 @@ function RecipesSection() {
         )}
       />
     </section>
+  )
+}
+
+// One row in a recipe's ingredients / outputs list: quantity, item icon
+// (rarity-bordered), and a rarity-colored link to the item page. Used in
+// both the Ingredients and Produces sections so the visual layout stays
+// identical and the only mechanical difference is which array drives it.
+function RecipeItemRow({
+  gameId,
+  itemId,
+  quantity,
+  name,
+  rarity,
+}: {
+  gameId: string | undefined
+  itemId: string
+  quantity: number
+  name: string
+  rarity: string | undefined
+}) {
+  const color = rarity ? RARITY_COLORS[rarity] : undefined
+  const inner = (
+    <>
+      <span className="recipe-item-qty">{quantity}×</span>
+      <ItemIcon id={itemId} rarity={rarity ?? null} />
+      <span className="recipe-item-name" style={color ? { color } : undefined}>
+        {name}
+      </span>
+    </>
+  )
+  return (
+    <li className="recipe-item-row">
+      {gameId ? (
+        <Link to={`/g/${gameId}/items/${itemId}`} className="recipe-item-link">
+          {inner}
+        </Link>
+      ) : (
+        inner
+      )}
+    </li>
   )
 }
 
@@ -2256,19 +2248,7 @@ function ActionsSection() {
               <>
                 <dt>Effects</dt>
                 <dd>
-                  <ul className="data-expansion-list">
-                    {a.effects
-                      .filter(
-                        (eff) =>
-                          typeof eff.description === 'string' && eff.description,
-                      )
-                      .map((eff, i) => (
-                        <li key={i}>
-                          <div>{eff.description}</div>
-                          <EffectMeta effect={eff} />
-                        </li>
-                      ))}
-                  </ul>
+                  <EffectsList effects={a.effects} />
                 </dd>
               </>
             )}
@@ -2370,19 +2350,7 @@ function SpellsSection() {
               <>
                 <dt>Effects</dt>
                 <dd>
-                  <ul className="data-expansion-list">
-                    {s.effects
-                      .filter(
-                        (eff) =>
-                          typeof eff.description === 'string' && eff.description,
-                      )
-                      .map((eff, i) => (
-                        <li key={i}>
-                          <div>{eff.description}</div>
-                          <EffectMeta effect={eff} />
-                        </li>
-                      ))}
-                  </ul>
+                  <EffectsList effects={s.effects} />
                 </dd>
               </>
             )}
