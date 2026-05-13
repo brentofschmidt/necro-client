@@ -6,7 +6,10 @@ import { ReactNode } from 'react'
 // enchantment, a summoning circle for conjuration, a skull for
 // necromancy, an eye-with-strikethrough for illusion, a shield-with-rune
 // for abjuration, and a crystal ball for divination.
-const SPELL_SCHOOL_ICONS: Record<string, ReactNode> = {
+//
+// Exported so SkillIcon can reuse the same glyphs for Magic Proficiency
+// skills (whose slugs match the spell-school ids).
+export const SPELL_SCHOOL_ICONS: Record<string, ReactNode> = {
   evocation: (
     <>
       <path d="M12 2v4" />

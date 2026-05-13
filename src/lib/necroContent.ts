@@ -414,6 +414,12 @@ export type Spell = Action & {
   // stat soaks the hit". Nullable so utility / not-yet-tagged spells
   // don't have to claim a school.
   magic_school: string | null
+  // Minimum level in the matching Magic Proficiency skill required to
+  // cast this spell. Level-1 starters sit at 1; higher-tier spells will
+  // climb (5, 10, 20, …). The engine resolves the skill via
+  // `magic_school` and compares character.skills[<school>].level to
+  // this value at cast time.
+  required_proficiency_level: number
 }
 
 export type SpellSchool = {
@@ -424,7 +430,10 @@ export type SpellSchool = {
   sort_order: number
 }
 
-export type SkillCategory = 'Proficiency' | 'Activity'
+export type SkillCategory =
+  | 'Weapon Proficiency'
+  | 'Magic Proficiency'
+  | 'Activity'
 
 export type SkillEffect = {
   type: 'Resource' | 'Stat'
@@ -439,7 +448,12 @@ export type Skill = {
   display_name: string
   description: string
   max_level: number
+  // Weapon-prof linkage: matches the wielded weapon's item_type at attack
+  // time. Empty for activities and magic profs.
   item_types: string[]
+  // Magic-prof linkage: matches the cast spell's magic_school. Empty for
+  // activities and weapon profs.
+  magic_schools: string[]
   per_level_effects: SkillEffect[]
 }
 
@@ -946,7 +960,7 @@ export async function listSpells(): Promise<Spell[]> {
   const { data, error } = await supabase
     .schema('necro_content')
     .from('spells')
-    .select(`${ACTION_COLUMNS}, splash_radius, splash_damage_multiplier, magic_school`)
+    .select(`${ACTION_COLUMNS}, splash_radius, splash_damage_multiplier, magic_school, required_proficiency_level`)
     .order('ability_name', { ascending: true })
   if (error) {
     console.error('Failed to load spells:', error.message)
@@ -976,7 +990,7 @@ export async function listSkills(): Promise<Skill[]> {
   const { data, error } = await supabase
     .schema('necro_content')
     .from('skills')
-    .select('name, category, display_name, description, max_level, item_types, per_level_effects')
+    .select('name, category, display_name, description, max_level, item_types, magic_schools, per_level_effects')
     .order('category', { ascending: true })
     .order('display_name', { ascending: true })
   if (error) {
@@ -985,6 +999,8 @@ export async function listSkills(): Promise<Skill[]> {
   }
   return ((data as Skill[] | null) ?? []).map((s) => ({
     ...s,
+    item_types: Array.isArray(s.item_types) ? s.item_types : [],
+    magic_schools: Array.isArray(s.magic_schools) ? s.magic_schools : [],
     per_level_effects: Array.isArray(s.per_level_effects) ? s.per_level_effects : [],
   }))
 }

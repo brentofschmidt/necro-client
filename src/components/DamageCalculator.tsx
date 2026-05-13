@@ -19,6 +19,7 @@ import {
   PublicCharacterEquipmentSlot,
   PublicCharacterSkill,
   Skill,
+  Spell,
 } from '../lib/necroContent'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -389,27 +390,56 @@ function groupEffectsByTarget(effects: CalcEffect[]): CalcEffectGroup[] {
   return ordered
 }
 
-// Resolves the attacker's weapon proficiency level for the action being used.
-// `spell.required_weapon_types[0]` (e.g. 'sword') matches against the catalog
-// skill row whose `item_types[0]` is the same value (e.g. 'swords' / 'Sword').
-// Returns null when the action has no weapon-type gate (spells, generic
-// abilities) — the caller falls back to SPELL_PROFICIENCY_FLOOR in that case.
+// Resolves the attacker's proficiency level for the action being used.
+//
+// Two lookup paths, tried in order:
+//   1. Weapon proficiency — `action.required_weapon_types[0]` (e.g. 'sword')
+//      matches the catalog skill row whose `item_types` contains that value.
+//   2. Magic proficiency — `spell.magic_school` (e.g. 'evocation') matches
+//      the catalog skill row whose `magic_schools` contains that value.
+//
+// Returns null when neither path produces a hit (utility abilities, spells
+// not yet tagged with a school) — the caller falls back to
+// SPELL_PROFICIENCY_FLOOR.
 function proficiencyLevelFor(
   attacker: SimpleCharacter,
   spell: Action,
   skillsCatalog: Skill[] | null,
 ): { level: number; skillName: string } | null {
+  if (!skillsCatalog) return null
+
+  // Weapon path
   const weaponType = spell.required_weapon_types?.[0]
-  if (!weaponType || !skillsCatalog) return null
-  const catalogEntry = skillsCatalog.find(
-    (s) => s.category === 'Proficiency' && s.item_types.includes(weaponType),
-  )
-  if (!catalogEntry) return null
-  const charSkill = attacker.skills.find((s) => s.skill === catalogEntry.name)
-  return {
-    level: charSkill?.level ?? 0,
-    skillName: catalogEntry.display_name ?? catalogEntry.name,
+  if (weaponType) {
+    const entry = skillsCatalog.find(
+      (s) => s.category === 'Weapon Proficiency' && s.item_types.includes(weaponType),
+    )
+    if (entry) {
+      const charSkill = attacker.skills.find((s) => s.skill === entry.name)
+      return {
+        level: charSkill?.level ?? 0,
+        skillName: entry.display_name ?? entry.name,
+      }
+    }
   }
+
+  // Magic path — Spell extends Action with magic_school. The merged
+  // picker stores both as Action so we read it through the wider type.
+  const magicSchool = (spell as Spell).magic_school
+  if (magicSchool) {
+    const entry = skillsCatalog.find(
+      (s) => s.category === 'Magic Proficiency' && s.magic_schools.includes(magicSchool),
+    )
+    if (entry) {
+      const charSkill = attacker.skills.find((s) => s.skill === entry.name)
+      return {
+        level: charSkill?.level ?? 0,
+        skillName: entry.display_name ?? entry.name,
+      }
+    }
+  }
+
+  return null
 }
 
 export function DamageCalculator() {

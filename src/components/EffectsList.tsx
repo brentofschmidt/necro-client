@@ -1,5 +1,6 @@
 import { ReactNode } from 'react'
-import { ActionEffect } from '../lib/necroContent'
+import { ActionEffect, DamageType } from '../lib/necroContent'
+import { DamageTypeIcon } from './DamageTypeIcon'
 
 // Renders an ability's `effects` JSONB array as a stack of per-effect
 // cards. Same visual language as the damage calculator's spell card
@@ -7,15 +8,24 @@ import { ActionEffect } from '../lib/necroContent'
 // header strip of chips (type / school / target) and a 2-col grid for
 // numeric properties (coefficient, tick interval, duration, etc.).
 //
+// Damage school lives on each *effect* (not on the parent spell), so
+// the school chip is rendered per-card with the matching catalog icon
+// and display_color — matching the Damage Types tab styling. Caller
+// passes the damage_types catalog so the chip can look up display_name
+// and color by id; if omitted (or the effect's school isn't in the
+// catalog) the chip falls back to the raw id capitalized.
+//
 // Used by the database Actions and Spells expansions so a reader can
 // scan an ability's effects without parsing the prose description. The
 // calculator version layers attacker-driven "Base damage" computation
 // on top; this is the same shape minus that column.
 export function EffectsList({
   effects,
+  damageTypes,
   emptyText = 'No effects.',
 }: {
   effects: ActionEffect[]
+  damageTypes?: DamageType[] | null
   emptyText?: string
 }) {
   if (effects.length === 0) {
@@ -24,22 +34,39 @@ export function EffectsList({
   return (
     <div className="dmg-effects">
       {effects.map((eff, i) => (
-        <EffectCard key={i} effect={eff} index={i} />
+        <EffectCard key={i} effect={eff} index={i} damageTypes={damageTypes} />
       ))}
     </div>
   )
 }
 
-function EffectCard({ effect, index }: { effect: ActionEffect; index: number }) {
+function EffectCard({
+  effect,
+  index,
+  damageTypes,
+}: {
+  effect: ActionEffect
+  index: number
+  damageTypes?: DamageType[] | null
+}) {
   const type = typeof effect.type === 'string' ? effect.type : ''
   const school = typeof effect.school === 'string' ? effect.school : ''
   const target = typeof effect.target === 'string' ? effect.target : ''
 
   const isHeal = type === 'Heal'
-  const isMagic = !!school && school !== 'physical'
-  const schoolKind: 'physical' | 'magical' = isMagic ? 'magical' : 'physical'
   const typeClass = type ? type.toLowerCase() : 'effect'
   const targetKind: 'primary' | 'splash' = target === 'Primary' ? 'primary' : 'splash'
+
+  // Look up the damage-type catalog row so the school chip can show the
+  // canonical display_name + display_color. Falls back to capitalize(id)
+  // if the catalog isn't loaded yet or doesn't know this id.
+  const schoolEntry = school
+    ? damageTypes?.find((d) => d.id === school)
+    : undefined
+  const schoolColor = schoolEntry?.display_color
+  const schoolLabel =
+    schoolEntry?.display_name ??
+    (school ? school.charAt(0).toUpperCase() + school.slice(1) : '')
 
   // Build the grid rows by inspecting the effect's loosely-typed fields.
   // Shape varies per type:
@@ -107,8 +134,12 @@ function EffectCard({ effect, index }: { effect: ActionEffect; index: number }) 
             </span>
           )}
           {school && (
-            <span className={`dmg-effect-tag dmg-effect-tag-${schoolKind}`}>
-              {school}
+            <span
+              className="dmg-effect-tag dmg-effect-tag-school"
+              style={schoolColor ? { color: schoolColor } : undefined}
+            >
+              <DamageTypeIcon id={school} color={schoolColor} />
+              {schoolLabel}
             </span>
           )}
           {target && (

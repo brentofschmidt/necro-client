@@ -949,14 +949,19 @@ function SkillsSection({ characterId }: { characterId: string }) {
       <section className="settings-section">
         <header className="settings-section-header">
           <h2>Skills</h2>
-          <p>Weapon proficiencies and activity skills, with rank and current XP.</p>
+          <p>Weapon proficiencies, magic proficiencies, and activity skills — with rank and current XP.</p>
         </header>
         <p className="text-dim">Loading…</p>
       </section>
     )
   }
 
-  const proficiencies = skills.filter((s) => s.category === 'Proficiency')
+  const weaponProficiencies = skills.filter(
+    (s) => s.category === 'Weapon Proficiency',
+  )
+  const magicProficiencies = skills.filter(
+    (s) => s.category === 'Magic Proficiency',
+  )
   const activities = skills.filter(
     (s) => s.category === 'Activity' || s.category === null,
   )
@@ -965,13 +970,20 @@ function SkillsSection({ characterId }: { characterId: string }) {
     <section className="settings-section">
       <header className="settings-section-header">
         <h2>Skills</h2>
-        <p>Weapon proficiencies and activity skills, with rank and current XP.</p>
+        <p>Weapon proficiencies, magic proficiencies, and activity skills — with rank and current XP.</p>
       </header>
 
-      {proficiencies.length > 0 && (
+      {weaponProficiencies.length > 0 && (
         <div className="content-subgroup">
           <h3 className="content-subgroup-heading">Weapon Proficiencies</h3>
-          <SkillTable skills={proficiencies} />
+          <SkillTable skills={weaponProficiencies} />
+        </div>
+      )}
+
+      {magicProficiencies.length > 0 && (
+        <div className="content-subgroup">
+          <h3 className="content-subgroup-heading">Magic Proficiencies</h3>
+          <SkillTable skills={magicProficiencies} />
         </div>
       )}
 

@@ -1,10 +1,14 @@
 import { ReactNode } from 'react'
+import { SPELL_SCHOOL_ICONS } from './SpellSchoolIcon'
 
 // Minimal SVG paths for each skill / proficiency. The renderer wraps
 // them in a 24×24 viewBox with currentColor stroke so the parent can
-// recolor via CSS (e.g. `var(--accent)` for proficiencies vs the activity
-// amber). Used by both the game-database tables and the per-character
-// skill panels.
+// recolor via CSS — accent blue for weapon profs, purple for magic
+// profs, amber for activities. Used by both the game-database tables
+// and the per-character skill panels.
+//
+// Magic proficiency glyphs are not duplicated here — SkillIcon falls
+// back to SPELL_SCHOOL_ICONS when the skill name matches a school id.
 const SKILL_ICONS: Record<string, ReactNode> = {
   // Weapon proficiencies
   swords: (
@@ -150,8 +154,9 @@ const SKILL_ICONS: Record<string, ReactNode> = {
 }
 
 // `category` is loose-typed (string | null) here because per-character
-// skill rows from the RPC come through as a nullable string. Falls back
-// to the activity amber when the category isn't 'Proficiency'.
+// skill rows from the RPC come through as a nullable string. Three-way
+// color split: weapon profs accent-blue, magic profs purple, everything
+// else activity amber.
 export function SkillIcon({
   name,
   category,
@@ -159,7 +164,13 @@ export function SkillIcon({
   name: string
   category: string | null | undefined
 }) {
-  const color = category === 'Proficiency' ? 'var(--accent)' : '#c8a64a'
+  const color =
+    category === 'Weapon Proficiency'
+      ? 'var(--accent)'
+      : category === 'Magic Proficiency'
+        ? '#9b6fcf'
+        : '#c8a64a'
+  const glyph = SKILL_ICONS[name] ?? SPELL_SCHOOL_ICONS[name]
   return (
     <svg
       width="20"
@@ -174,7 +185,7 @@ export function SkillIcon({
       style={{ color }}
       aria-hidden="true"
     >
-      {SKILL_ICONS[name] ?? <circle cx="12" cy="12" r="6" />}
+      {glyph ?? <circle cx="12" cy="12" r="6" />}
     </svg>
   )
 }

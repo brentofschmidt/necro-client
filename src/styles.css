@@ -4774,6 +4774,23 @@ a.content-card.content-card-link:hover {
   color: #5a8cd6;
 }
 
+/* Per-effect damage school chip. Text color comes from the catalog's
+   display_color (set inline by the renderer); the chip itself stays
+   neutral-bordered so it visually groups with the other chips, and the
+   inline DamageTypeIcon is shrunk to chip-size and aligned on the
+   baseline. */
+.dmg-effect-tag-school {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-transform: none;
+}
+
+.dmg-effect-tag-school svg {
+  width: 12px;
+  height: 12px;
+}
+
 /* Target chips. Primary is the picked defender; non-primary (splash, etc.)
    gets a muted amber chip to make it visually obvious that the effect
    does NOT contribute to the damage applied to the picked defender. */

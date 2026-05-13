@@ -1,5 +1,5 @@
 import { ReactNode, useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { fetchGameById, Game, GameStatus } from '../lib/games'
 import { formatRelativeShort } from '../lib/time'
 import { DamageCalculator } from './DamageCalculator'
@@ -14,6 +14,7 @@ import { ActionIcon } from './ActionIcon'
 import { EffectsList } from './EffectsList'
 import { RARITY_COLORS } from './ItemDetails'
 import { SpellSchoolIcon } from './SpellSchoolIcon'
+import { DamageTypeIcon } from './DamageTypeIcon'
 import { DataTable, DataTableColumn } from './DataTable'
 import { ItemDetails, itemToDetailsData } from './ItemDetails'
 import {
@@ -807,130 +808,6 @@ function useAsyncList<T>(load: () => Promise<T[]>, deps: unknown[] = []) {
   return items
 }
 
-const DAMAGE_TYPE_ICONS: Record<string, ReactNode> = {
-  bludgeoning: (
-    <>
-      <rect x="13" y="3" width="8" height="5" rx="1" />
-      <path d="M14 8l-9 9" />
-      <path d="M3 19l3 3" />
-    </>
-  ),
-  piercing: (
-    <>
-      <path d="M4 20L20 4" />
-      <path d="M14 4h6v6" />
-      <path d="M3 17l4 4" />
-    </>
-  ),
-  slashing: (
-    <>
-      <path d="M5 19L19 5" />
-      <path d="M16 5h4v4" />
-      <path d="M3 21l4-4" />
-    </>
-  ),
-  acid: (
-    <>
-      <path d="M12 3c-3 5-6 8-6 12a6 6 0 0 0 12 0c0-4-3-7-6-12z" />
-      <path d="M9 16a3 3 0 0 0 3 3" />
-    </>
-  ),
-  cold: (
-    <>
-      <path d="M12 2v20" />
-      <path d="M2 12h20" />
-      <path d="M5 5l14 14" />
-      <path d="M19 5L5 19" />
-      <path d="M9 4l3 2 3-2" />
-      <path d="M9 20l3-2 3 2" />
-    </>
-  ),
-  fire: (
-    <>
-      <path d="M12 3c-2 4-5 6-5 10a5 5 0 0 0 10 0c0-2-1-3-2-5 0 2-1 3-3 3 1-3 1-5 0-8z" />
-    </>
-  ),
-  lightning: (
-    <>
-      <path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z" />
-    </>
-  ),
-  thunder: (
-    <>
-      <path d="M5 13a4 4 0 0 1 4-4 5 5 0 0 1 9 1 3 3 0 0 1 0 6H8" />
-      <path d="M12 18l3-4h-2l1-3" />
-    </>
-  ),
-  force: (
-    <>
-      <circle cx="12" cy="12" r="3" />
-      <path d="M12 2v4" />
-      <path d="M12 18v4" />
-      <path d="M2 12h4" />
-      <path d="M18 12h4" />
-      <path d="M5 5l3 3" />
-      <path d="M16 16l3 3" />
-      <path d="M19 5l-3 3" />
-      <path d="M8 16l-3 3" />
-    </>
-  ),
-  necrotic: (
-    <>
-      <path d="M12 3a7 7 0 0 0-7 7v3l2 2v3h10v-3l2-2v-3a7 7 0 0 0-7-7z" />
-      <circle cx="9" cy="11" r="1" fill="currentColor" />
-      <circle cx="15" cy="11" r="1" fill="currentColor" />
-      <path d="M10 16h4" />
-    </>
-  ),
-  poison: (
-    <>
-      <path d="M9 2h6v4l3 5v7a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3v-7l3-5z" />
-      <path d="M6 13h12" />
-      <circle cx="11" cy="17" r="0.8" fill="currentColor" />
-      <circle cx="14" cy="15" r="0.6" fill="currentColor" />
-    </>
-  ),
-  psychic: (
-    <>
-      <path d="M12 4a4 4 0 0 0-4 4c0 1.5.8 2.7 2 3.5C8.8 12 8 13.2 8 15a4 4 0 0 0 8 0c0-1.8-.8-3-2-3.5 1.2-.8 2-2 2-3.5a4 4 0 0 0-4-4z" />
-      <path d="M12 8v8" />
-    </>
-  ),
-  radiant: (
-    <>
-      <circle cx="12" cy="12" r="4" />
-      <path d="M12 2v3" />
-      <path d="M12 19v3" />
-      <path d="M2 12h3" />
-      <path d="M19 12h3" />
-      <path d="M5 5l2 2" />
-      <path d="M17 17l2 2" />
-      <path d="M19 5l-2 2" />
-      <path d="M7 17l-2 2" />
-    </>
-  ),
-}
-
-function DamageTypeIcon({ id, color }: { id: string; color: string }) {
-  return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="damage-icon"
-      style={{ color }}
-      aria-hidden="true"
-    >
-      {DAMAGE_TYPE_ICONS[id] ?? <circle cx="12" cy="12" r="6" />}
-    </svg>
-  )
-}
-
 function DamageTypesSection() {
   const types = useAsyncList<DamageType>(() => listDamageTypes())
 
@@ -1052,9 +929,58 @@ function SkillsSection() {
 
 function ProficienciesSection() {
   const all = useAsyncList<Skill>(() => listSkills())
-  const profs =
-    all == null ? null : all.filter((s) => s.category === 'Proficiency')
+  const weaponProfs =
+    all == null ? null : all.filter((s) => s.category === 'Weapon Proficiency')
+  const magicProfs =
+    all == null ? null : all.filter((s) => s.category === 'Magic Proficiency')
 
+  return (
+    <section className="settings-section">
+      <header className="settings-section-header">
+        <h2>Proficiencies</h2>
+        <p>
+          Weapon proficiencies gate weapon use and improve accuracy /
+          damage with that family. Magic proficiencies are the parallel
+          for spellcasting — one per school of magic, driving spell-side
+          stats and the damage-roll skill floor for spells of that
+          school. Click a row for details.
+        </p>
+      </header>
+
+      <div className="content-subgroup">
+        <h3 className="content-subgroup-heading">Weapon Proficiencies</h3>
+        <ProficiencyTable
+          rows={weaponProfs}
+          searchPlaceholder="Search weapon proficiencies…"
+          emptyText="No weapon proficiencies defined yet."
+          linkageKey="item_types"
+        />
+      </div>
+
+      <div className="content-subgroup">
+        <h3 className="content-subgroup-heading">Magic Proficiencies</h3>
+        <ProficiencyTable
+          rows={magicProfs}
+          searchPlaceholder="Search magic proficiencies…"
+          emptyText="No magic proficiencies defined yet."
+          linkageKey="magic_schools"
+        />
+      </div>
+    </section>
+  )
+}
+
+function ProficiencyTable({
+  rows,
+  searchPlaceholder,
+  emptyText,
+  linkageKey,
+}: {
+  rows: Skill[] | null
+  searchPlaceholder: string
+  emptyText: string
+  linkageKey: 'item_types' | 'magic_schools'
+}) {
   const columns: DataTableColumn<Skill>[] = [
     {
       id: 'name',
@@ -1077,26 +1003,16 @@ function ProficienciesSection() {
   ]
 
   return (
-    <section className="settings-section">
-      <header className="settings-section-header">
-        <h2>Proficiencies</h2>
-        <p>
-          Weapon proficiencies — swords, axes, maces, daggers, bows, staves.
-          Gate weapon use and improve accuracy / damage with that family.
-          Click a row for details.
-        </p>
-      </header>
-      <DataTable<Skill>
-        rows={profs}
-        columns={columns}
-        rowKey={(s) => s.name}
-        searchPlaceholder="Search proficiencies…"
-        searchKeys={(s) => [s.display_name, s.name, s.description, ...s.item_types]}
-        emptyText="No proficiencies defined yet."
-        defaultSort={{ columnId: 'name', direction: 'asc' }}
-        expandedContent={(s) => <SkillExpansion skill={s} />}
-      />
-    </section>
+    <DataTable<Skill>
+      rows={rows}
+      columns={columns}
+      rowKey={(s) => s.name}
+      searchPlaceholder={searchPlaceholder}
+      searchKeys={(s) => [s.display_name, s.name, s.description, ...s[linkageKey]]}
+      emptyText={emptyText}
+      defaultSort={{ columnId: 'name', direction: 'asc' }}
+      expandedContent={(s) => <SkillExpansion skill={s} />}
+    />
   )
 }
 
@@ -1178,6 +1094,12 @@ function SkillExpansion({ skill: s }: { skill: Skill }) {
         <>
           <dt>Item Types</dt>
           <dd>{s.item_types.join(', ')}</dd>
+        </>
+      )}
+      {s.magic_schools.length > 0 && (
+        <>
+          <dt>Magic Schools</dt>
+          <dd>{s.magic_schools.join(', ')}</dd>
         </>
       )}
       {s.description && (
@@ -1864,8 +1786,9 @@ function RecipesSection() {
   const { gameId } = useParams<{ gameId: string }>()
   const recipes = useAsyncList<Recipe>(() => listRecipes())
   const items = useAsyncList<Item>(() => listItems())
-  const [skillFilter, setSkillFilter] = useState<string>('')
-  const [stationFilter, setStationFilter] = useState<string>('')
+  const [skillFilter, setSkillFilter] = useUrlParam('skill')
+  const [stationFilter, setStationFilter] = useUrlParam('station')
+  const clearRecipeFilters = useClearUrlParams()
 
   const itemNameById = new Map((items ?? []).map((i) => [i.id, i.item_name]))
   const itemRarityById = new Map((items ?? []).map((i) => [i.id, i.rarity]))
@@ -1949,10 +1872,7 @@ function RecipesSection() {
           <button
             type="button"
             className="filter-reset"
-            onClick={() => {
-              setSkillFilter('')
-              setStationFilter('')
-            }}
+            onClick={() => clearRecipeFilters(['skill', 'station'])}
           >
             Reset
           </button>
@@ -2162,6 +2082,48 @@ function RaritiesSection() {
   )
 }
 
+// Hooks a single filter value to a URL query param so the page is
+// bookmarkable / shareable / back-button-friendly. Empty string ('')
+// means "all" and is omitted from the URL entirely so a no-filter page
+// reads as a clean path. Uses `replace: true` so changing a dropdown
+// doesn't pile entries into the browser history — back button still
+// works for actual navigation (tab switches, page changes).
+function useUrlParam(key: string): [string, (v: string) => void] {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const value = searchParams.get(key) ?? ''
+  const setValue = (v: string) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (v) next.set(key, v)
+        else next.delete(key)
+        return next
+      },
+      { replace: true },
+    )
+  }
+  return [value, setValue]
+}
+
+// Companion to useUrlParam — returns a fn that clears a *batch* of
+// keys in ONE setSearchParams call. Doing it as three sequential
+// useUrlParam setters doesn't work: each call's updater sees the same
+// initial URL snapshot, so only the last setter's deletion sticks.
+// One batched call dodges that race.
+function useClearUrlParams(): (keys: string[]) => void {
+  const [, setSearchParams] = useSearchParams()
+  return (keys: string[]) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        for (const key of keys) next.delete(key)
+        return next
+      },
+      { replace: true },
+    )
+  }
+}
+
 // Small label+select pair used by every DataTable filter bar. Empty
 // string value means "any" — the option labelled `allLabel` selects it.
 // Disabled state dims and stops pointer interaction (used when the
@@ -2217,12 +2179,15 @@ function ItemsSection() {
     return sc ? classById.get(sc.item_class) : undefined
   }
 
-  // Filter state — empty string means "any". Subclass is dependent on
-  // class; selecting a class narrows the Subclass dropdown to that
-  // class's subclasses and clears any out-of-scope selection.
-  const [classFilter, setClassFilter] = useState<string>('')
-  const [subclassFilter, setSubclassFilter] = useState<string>('')
-  const [rarityFilter, setRarityFilter] = useState<string>('')
+  // Filter state — backed by URL query params so the items page is
+  // shareable / bookmarkable. Empty string means "any" and is omitted
+  // from the URL. Subclass is dependent on class; selecting a class
+  // narrows the Subclass dropdown to that class's subclasses and clears
+  // any out-of-scope selection (see the useEffect below).
+  const [classFilter, setClassFilter] = useUrlParam('class')
+  const [subclassFilter, setSubclassFilter] = useUrlParam('subclass')
+  const [rarityFilter, setRarityFilter] = useUrlParam('rarity')
+  const clearItemFilters = useClearUrlParams()
 
   const subclassesForClass = (classes ?? []).length
     ? (subclasses ?? []).filter(
@@ -2352,11 +2317,7 @@ function ItemsSection() {
           <button
             type="button"
             className="filter-reset"
-            onClick={() => {
-              setClassFilter('')
-              setSubclassFilter('')
-              setRarityFilter('')
-            }}
+            onClick={() => clearItemFilters(['class', 'subclass', 'rarity'])}
           >
             Reset
           </button>
@@ -2416,7 +2377,9 @@ function OpenIcon() {
 
 function ActionsSection() {
   const actions = useAsyncList<Action>(() => listActions())
-  const [weaponFilter, setWeaponFilter] = useState<string>('')
+  // Damage-types catalog feeds the school chip on each effect card.
+  const damageTypes = useAsyncList<DamageType>(() => listDamageTypes())
+  const [weaponFilter, setWeaponFilter] = useUrlParam('weapon')
 
   // Distinct weapon types are derived from the rows themselves so any
   // future action that gates on a new weapon class shows up here without
@@ -2543,7 +2506,7 @@ function ActionsSection() {
               <>
                 <dt>Effects</dt>
                 <dd>
-                  <EffectsList effects={a.effects} />
+                  <EffectsList effects={a.effects} damageTypes={damageTypes} />
                 </dd>
               </>
             )}
@@ -2557,9 +2520,14 @@ function ActionsSection() {
 function SpellsSection() {
   const spells = useAsyncList<Spell>(() => listSpells())
   const magicSchools = useAsyncList<SpellSchool>(() => listSpellSchools())
-  const [schoolFilter, setSchoolFilter] = useState<string>('')
-  const [magicSchoolFilter, setMagicSchoolFilter] = useState<string>('')
-  const [typeFilter, setTypeFilter] = useState<string>('')
+  // Damage-types catalog drives the icon + colored label for the
+  // damage-school row in the expansion. Falls back to the raw id string
+  // if the spell points at a damage_school not in the catalog.
+  const damageTypes = useAsyncList<DamageType>(() => listDamageTypes())
+  const [schoolFilter, setSchoolFilter] = useUrlParam('damage_school')
+  const [magicSchoolFilter, setMagicSchoolFilter] = useUrlParam('magic_school')
+  const [typeFilter, setTypeFilter] = useUrlParam('type')
+  const clearSpellFilters = useClearUrlParams()
 
   // Damage-school option set derived from spell rows so new elemental
   // schools (frost, shadow, etc.) appear without touching this component.
@@ -2619,6 +2587,36 @@ function SpellsSection() {
       ),
       sortKey: (s) => s.ability_name.toLowerCase(),
     },
+    {
+      id: 'school',
+      header: 'School',
+      // Renders the school icon tinted with its catalog display_color +
+      // the school name in the same color so the row reads at a glance.
+      // Untagged spells (magic_school null) show an em-dash.
+      cell: (s) => {
+        if (!s.magic_school) return <span className="text-dim">—</span>
+        const sch = magicSchools?.find((m) => m.id === s.magic_school)
+        return (
+          <>
+            <SpellSchoolIcon id={s.magic_school} color={sch?.display_color} />
+            <span
+              className="data-cell-name"
+              style={sch ? { color: sch.display_color } : undefined}
+            >
+              {sch?.display_name ?? capitalize(s.magic_school)}
+            </span>
+          </>
+        )
+      },
+      // Sort by school sort_order so the column orders Evocation →
+      // Divination just like the database tab; spells without a school
+      // sink to the bottom.
+      sortKey: (s) => {
+        if (!s.magic_school) return Number.MAX_SAFE_INTEGER
+        const sch = magicSchools?.find((m) => m.id === s.magic_school)
+        return sch?.sort_order ?? Number.MAX_SAFE_INTEGER
+      },
+    },
   ]
 
   return (
@@ -2658,11 +2656,9 @@ function SpellsSection() {
           <button
             type="button"
             className="filter-reset"
-            onClick={() => {
-              setSchoolFilter('')
-              setMagicSchoolFilter('')
-              setTypeFilter('')
-            }}
+            onClick={() =>
+              clearSpellFilters(['damage_school', 'magic_school', 'type'])
+            }
           >
             Reset
           </button>
@@ -2708,10 +2704,18 @@ function SpellsSection() {
                 </dd>
               </>
             )}
-            {s.damage_school && (
+            {s.magic_school && (
               <>
-                <dt>Damage school</dt>
-                <dd>{s.damage_school}</dd>
+                <dt>Requires</dt>
+                <dd>
+                  {(() => {
+                    const sch = magicSchools?.find(
+                      (m) => m.id === s.magic_school,
+                    )
+                    const schoolName = sch?.display_name ?? capitalize(s.magic_school)
+                    return `${schoolName} proficiency Lv. ${s.required_proficiency_level}`
+                  })()}
+                </dd>
               </>
             )}
             {s.resource_cost > 0 && (
@@ -2754,7 +2758,7 @@ function SpellsSection() {
               <>
                 <dt>Effects</dt>
                 <dd>
-                  <EffectsList effects={s.effects} />
+                  <EffectsList effects={s.effects} damageTypes={damageTypes} />
                 </dd>
               </>
             )}
