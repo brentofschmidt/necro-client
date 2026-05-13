@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cp \"/c/Users/brent/UnityProjects/Necro/Assets/Fantasy RPG Icons Pack/RPG Medieval food icons/PNG/background/1.png\" \"public/items/cooked_trout.png\")",
+      "Bash(cp \"/c/Users/brent/UnityProjects/Necro/Assets/Fantasy RPG Icons Pack/Alchemical Potions Icons/PNG/background/11.png\" \"public/items/minor_healing_potion.png\")",
+      "Bash(cp \"C:/Users/brent/UnityProjects/Necro/Assets/Fantasy RPG Icons Pack/RPG Engineering Skill Icons/PNG/8.png\" \"C:/Users/brent/OneDrive/Documents/GitHub/necro-client/public/items/flint_saw.png\")",
+      "Bash(cp \"C:/Users/brent/UnityProjects/Necro/Assets/Fantasy RPG Icons Pack/RPG Engineering Skill Icons/PNG/10.png\" \"C:/Users/brent/OneDrive/Documents/GitHub/necro-client/public/items/flint_shears.png\")",
+      "Bash(cp \"C:/Users/brent/UnityProjects/Necro/Assets/Fantasy RPG Icons Pack/RPG Tannery Skill Icons/PNG/2.png\" \"C:/Users/brent/OneDrive/Documents/GitHub/necro-client/public/items/flint_skinning_knife.png\")",
+      "Bash(cp \"C:/Users/brent/UnityProjects/Necro/Assets/Fantasy RPG Icons Pack/RPG Blacksmith skills Icons/PNG/4.png\" \"C:/Users/brent/OneDrive/Documents/GitHub/necro-client/public/items/stone_smithing_hammer.png\")",
+      "Bash(cp \"C:/Users/brent/UnityProjects/Necro/Assets/Fantasy RPG Icons Pack/RPG Fishing Icons/PNG/background/32.png\" \"C:/Users/brent/OneDrive/Documents/GitHub/necro-client/public/items/wooden_fishing_rod.png\")",
+      "Bash(npx tsc *)"
+    ]
+  }
+}
