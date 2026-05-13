@@ -169,6 +169,51 @@ body {
   color: var(--text);
 }
 
+/* Tree-style sidebar (Items > class > subclass). Parent rows are normal
+   settings-tab buttons with a right-aligned chevron — the whole row is
+   clickable, toggling expansion and selecting that parent's "all" state.
+   The first sub-row of every open parent is an explicit "All …" item so
+   users can return to the broader view without collapsing the tree. */
+.settings-tab-group {
+  display: contents;
+}
+
+.settings-tab-parent .settings-tab-parent-chevron {
+  margin-left: auto;
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.settings-tab-parent:hover .settings-tab-parent-chevron {
+  opacity: 1;
+}
+
+.settings-tab-l1 {
+  padding-left: 28px;
+  font-size: 13px;
+}
+
+.settings-tab-l2 {
+  padding-left: 52px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.settings-tab-l2:hover {
+  color: var(--text);
+}
+
+/* "All …" row: subtler than a regular sub-row so it reads as a roll-up
+   rather than a peer of the concrete subcategories. */
+.settings-tab-all {
+  font-style: italic;
+  color: var(--text-dim);
+}
+
+.settings-tab-all.active {
+  font-style: normal;
+}
+
 @media (max-width: 720px) {
   .settings-layout {
     grid-template-columns: 1fr;
@@ -727,6 +772,7 @@ body {
   font-size: 14px;
   font-weight: 600;
   letter-spacing: 0.5px;
+  text-decoration: none;
   cursor: pointer;
   transition: color 0.15s ease, border-color 0.15s ease;
 }

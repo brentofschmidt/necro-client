@@ -388,6 +388,7 @@ type LoadState = 'loading' | 'found' | 'not-found'
 export function GamePage() {
   const params = useParams<{ gameId: string; section?: string; tab?: string }>()
   const navigate = useNavigate()
+  const [currentSearchParams] = useSearchParams()
   const { gameId, section: paramSection, tab: paramTab } = params
   const [game, setGame] = useState<Game | null>(null)
   const [loadState, setLoadState] = useState<LoadState>('loading')
@@ -494,17 +495,16 @@ export function GamePage() {
     }
   }, [gameId, paramSection, paramTab, navigate])
 
-  function setSection(id: SectionId) {
-    if (!gameId) return
-    if (id === 'game') {
-      navigate(`/g/${gameId}/game/${lastGameInfoTab}`, { replace: true })
-    } else if (id === 'database') {
-      navigate(`/g/${gameId}/database/${lastDatabaseTab}`, { replace: true })
-    } else if (id === 'dev') {
-      navigate(`/g/${gameId}/dev/${lastDevTab}`, { replace: true })
-    } else {
-      navigate(`/g/${gameId}/${id}`, { replace: true })
-    }
+  // Builds the URL a given top-level section should point to. Sub-tabbed
+  // sections (game / database / dev) include the user's last-visited
+  // sub-tab so left-click feels continuous; middle-click / right-click
+  // honour the same URL so a new tab lands on the right sub-tab too.
+  function sectionUrl(id: SectionId): string {
+    if (!gameId) return ''
+    if (id === 'game') return `/g/${gameId}/game/${lastGameInfoTab}`
+    if (id === 'database') return `/g/${gameId}/database/${lastDatabaseTab}`
+    if (id === 'dev') return `/g/${gameId}/dev/${lastDevTab}`
+    return `/g/${gameId}/${id}`
   }
 
   function setGameInfoTab(id: GameInfoTabId) {
@@ -515,6 +515,30 @@ export function GamePage() {
   function setDatabaseTab(id: DatabaseTabId) {
     if (!gameId) return
     navigate(`/g/${gameId}/database/${id}`, { replace: true })
+  }
+
+  // Jump to a database tab with specific URL params set in one navigation.
+  // When staying on the same tab, params NOT in the new set are preserved
+  // (so e.g. rarity / station / damage_school carry through a sidebar
+  // click that only overrides class/skill/magic_school). When switching
+  // tabs, everything else is dropped — stale filter state from another
+  // tab shouldn't leak in.
+  function jumpToDb(tab: DatabaseTabId, params: Record<string, string>) {
+    if (!gameId) return
+    const sp = new URLSearchParams()
+    if (paramSection === 'database' && paramTab === tab) {
+      for (const [k, v] of currentSearchParams.entries()) {
+        if (!(k in params)) sp.set(k, v)
+      }
+    }
+    for (const [k, v] of Object.entries(params)) {
+      if (v) sp.set(k, v)
+      else sp.delete(k)
+    }
+    const qs = sp.toString()
+    navigate(`/g/${gameId}/database/${tab}${qs ? `?${qs}` : ''}`, {
+      replace: true,
+    })
   }
 
   function setDevTab(id: DevTabId) {
@@ -639,18 +663,46 @@ export function GamePage() {
       sectionContent = (
         <div className="settings-layout">
           <nav className="settings-tabs" aria-label={`${game.name} database`}>
-            {DATABASE_TABS.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                className={`settings-tab ${activeDatabaseTab === t.id ? 'active' : ''}`}
-                onClick={() => setDatabaseTab(t.id)}
-                aria-current={activeDatabaseTab === t.id ? 'page' : undefined}
-              >
-                {TAB_ICONS[t.id]}
-                <span>{t.label}</span>
-              </button>
-            ))}
+            {DATABASE_TABS.map((t) =>
+              t.id === 'items' ? (
+                <ItemsTreeNav
+                  key={t.id}
+                  active={activeDatabaseTab === 'items'}
+                  classFilter={currentSearchParams.get('class') ?? ''}
+                  subclassFilter={currentSearchParams.get('subclass') ?? ''}
+                  onSelectItems={() => jumpToDb('items', { class: '', subclass: '' })}
+                  onSelectClass={(c) => jumpToDb('items', { class: c, subclass: '' })}
+                  onSelectSubclass={(c, s) => jumpToDb('items', { class: c, subclass: s })}
+                />
+              ) : t.id === 'spells' ? (
+                <SpellsTreeNav
+                  key={t.id}
+                  active={activeDatabaseTab === 'spells'}
+                  schoolFilter={currentSearchParams.get('magic_school') ?? ''}
+                  onSelectAll={() => jumpToDb('spells', { magic_school: '' })}
+                  onSelectSchool={(s) => jumpToDb('spells', { magic_school: s })}
+                />
+              ) : t.id === 'recipes' ? (
+                <RecipesTreeNav
+                  key={t.id}
+                  active={activeDatabaseTab === 'recipes'}
+                  skillFilter={currentSearchParams.get('skill') ?? ''}
+                  onSelectAll={() => jumpToDb('recipes', { skill: '' })}
+                  onSelectSkill={(s) => jumpToDb('recipes', { skill: s })}
+                />
+              ) : (
+                <button
+                  key={t.id}
+                  type="button"
+                  className={`settings-tab ${activeDatabaseTab === t.id ? 'active' : ''}`}
+                  onClick={() => setDatabaseTab(t.id)}
+                  aria-current={activeDatabaseTab === t.id ? 'page' : undefined}
+                >
+                  {TAB_ICONS[t.id]}
+                  <span>{t.label}</span>
+                </button>
+              ),
+            )}
           </nav>
           <div className="settings-content" ref={contentRef}>
             {databaseContent}
@@ -718,15 +770,14 @@ export function GamePage() {
       <h1 className="settings-title">{game.name}</h1>
       <nav className="game-section-tabs" aria-label={`${game.name} sections`}>
         {SECTIONS.map((s) => (
-          <button
+          <Link
             key={s.id}
-            type="button"
+            to={sectionUrl(s.id)}
             className={`game-section-tab ${activeSection === s.id ? 'active' : ''}`}
-            onClick={() => setSection(s.id)}
             aria-current={activeSection === s.id ? 'page' : undefined}
           >
             {s.label}
-          </button>
+          </Link>
         ))}
       </nav>
       {sectionContent}
@@ -1574,6 +1625,348 @@ function ItemClassIcon({ itemClass }: { itemClass: string }) {
   )
 }
 
+// Tree-structured sidebar node for the Items database tab. Renders the
+// Items row, then (when expanded) the item_classes underneath, then (when
+// each class is expanded) its item_subclasses. Selection state lives in
+// URL params (class, subclass) so the same row drives ItemsSection's
+// filtering; expansion is local state.
+//
+// Interaction model — standard accordion behavior:
+//   - Clicking a parent row (Items, or a class) toggles its expansion AND
+//     navigates to that parent's "all" state. So clicking "Material"
+//     expands its subclasses and sets class=material with no subclass.
+//   - The first sub-row of every expanded parent is an explicit "All"
+//     item that mirrors the parent's selection — gives users a clear
+//     "back to broad view" option once they've drilled into a subclass.
+//   - Subclass rows navigate without changing expansion.
+//   - The parent row only carries the active highlight when it's
+//     collapsed; once expanded, the "All" sub-row (or a sibling subclass)
+//     owns the highlight so it doesn't double-light.
+function ItemsTreeNav({
+  active,
+  classFilter,
+  subclassFilter,
+  onSelectItems,
+  onSelectClass,
+  onSelectSubclass,
+}: {
+  active: boolean
+  classFilter: string
+  subclassFilter: string
+  onSelectItems: () => void
+  onSelectClass: (classId: string) => void
+  onSelectSubclass: (classId: string, subclassId: string) => void
+}) {
+  const classes = useAsyncList<ItemClass>(() => listItemClasses())
+  const subclasses = useAsyncList<ItemSubclass>(() => listItemSubclasses())
+
+  // Both expansion states default to collapsed — the user opens what
+  // they want manually. We don't auto-expand on URL filter changes
+  // either; the click-to-expand contract should be honored even when
+  // navigating via the back button or a deep link.
+  const [itemsExpanded, setItemsExpanded] = useState(false)
+  // Single-expand (accordion) — only one class shows its subclasses at a
+  // time. Opening a new class auto-closes the previously open one.
+  const [expandedClass, setExpandedClass] = useState<string | null>(null)
+
+  const sortedClasses = (classes ?? [])
+    .slice()
+    .sort((a, b) => a.sort_order - b.sort_order)
+  const subclassesByClass = new Map<string, ItemSubclass[]>()
+  for (const sc of subclasses ?? []) {
+    const list = subclassesByClass.get(sc.item_class) ?? []
+    list.push(sc)
+    subclassesByClass.set(sc.item_class, list)
+  }
+  for (const list of subclassesByClass.values()) {
+    list.sort((a, b) => a.display_name.localeCompare(b.display_name))
+  }
+
+  // "All items" highlight only when expanded — when collapsed the parent
+  // row carries the highlight instead.
+  const allItemsActive =
+    active && !classFilter && !subclassFilter && itemsExpanded
+  const itemsParentActive =
+    active && !classFilter && !subclassFilter && !itemsExpanded
+
+  return (
+    <>
+      <button
+        type="button"
+        className={`settings-tab settings-tab-parent ${itemsParentActive ? 'active' : ''}`}
+        onClick={() => {
+          setItemsExpanded((v) => !v)
+          onSelectItems()
+        }}
+        aria-expanded={itemsExpanded}
+        aria-current={itemsParentActive ? 'page' : undefined}
+      >
+        {TAB_ICONS.items}
+        <span>Items</span>
+        <Chevron open={itemsExpanded} />
+      </button>
+      {itemsExpanded && (
+        <>
+          <button
+            type="button"
+            className={`settings-tab settings-tab-l1 settings-tab-all ${allItemsActive ? 'active' : ''}`}
+            onClick={onSelectItems}
+            aria-current={allItemsActive ? 'page' : undefined}
+          >
+            <span>All items</span>
+          </button>
+          {sortedClasses.map((c) => {
+            const classSubclasses = subclassesByClass.get(c.id) ?? []
+            // A dropdown only makes sense when there's a real choice to
+            // make. With 0 or 1 subclass the class row collapses to a
+            // plain leaf — filtering by class alone yields the same
+            // result a single-subclass filter would.
+            const isParent = classSubclasses.length > 1
+            const isExpanded = isParent && expandedClass === c.id
+            const classParentActive = isParent
+              ? active && classFilter === c.id && !subclassFilter && !isExpanded
+              : active && classFilter === c.id && !subclassFilter
+            const classAllActive =
+              isParent &&
+              active &&
+              classFilter === c.id &&
+              !subclassFilter &&
+              isExpanded
+            return (
+              <div key={c.id} className="settings-tab-group">
+                <button
+                  type="button"
+                  className={`settings-tab settings-tab-l1 ${isParent ? 'settings-tab-parent' : ''} ${classParentActive ? 'active' : ''}`}
+                  onClick={() => {
+                    if (isParent) {
+                      setExpandedClass((prev) => (prev === c.id ? null : c.id))
+                    }
+                    onSelectClass(c.id)
+                  }}
+                  aria-expanded={isParent ? isExpanded : undefined}
+                  aria-current={classParentActive ? 'page' : undefined}
+                >
+                  <ItemClassIcon itemClass={c.id} />
+                  <span>{c.display_name}</span>
+                  {isParent && <Chevron open={isExpanded} />}
+                </button>
+                {isExpanded && (
+                  <>
+                    <button
+                      type="button"
+                      className={`settings-tab settings-tab-l2 settings-tab-all ${classAllActive ? 'active' : ''}`}
+                      onClick={() => onSelectClass(c.id)}
+                      aria-current={classAllActive ? 'page' : undefined}
+                    >
+                      <span>All {c.display_name.toLowerCase()}</span>
+                    </button>
+                    {classSubclasses.map((sc) => {
+                      const subActive =
+                        active &&
+                        classFilter === c.id &&
+                        subclassFilter === sc.name
+                      return (
+                        <button
+                          key={sc.name}
+                          type="button"
+                          className={`settings-tab settings-tab-l2 ${subActive ? 'active' : ''}`}
+                          onClick={() => onSelectSubclass(c.id, sc.name)}
+                          aria-current={subActive ? 'page' : undefined}
+                        >
+                          <span>{sc.display_name}</span>
+                        </button>
+                      )
+                    })}
+                  </>
+                )}
+              </div>
+            )
+          })}
+        </>
+      )}
+    </>
+  )
+}
+
+// Right-side chevron decoration for accordion-style parent rows. Rotates
+// 90° when its parent is open. Purely visual — the parent row itself
+// owns the click handler.
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 10 10"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="settings-tab-parent-chevron"
+      style={{
+        transform: open ? 'rotate(90deg)' : 'none',
+        transition: 'transform 0.15s ease',
+      }}
+    >
+      <path d="M3 1l4 4-4 4" />
+    </svg>
+  )
+}
+
+// Single-level accordion sidebar — parent row + a flat list of leaves.
+// Same interaction model as ItemsTreeNav (parent click toggles expansion
+// and selects "All", an explicit "All …" sub-row mirrors that on the
+// expanded path), minus the nested second level. Used for sections
+// where the filter dimension is one-deep (spells by magic school,
+// recipes by skill).
+function FlatTreeNav({
+  label,
+  icon,
+  active,
+  activeLeafId,
+  leaves,
+  allLabel,
+  onSelectAll,
+  onSelectLeaf,
+}: {
+  label: string
+  icon: ReactNode
+  active: boolean
+  activeLeafId: string
+  leaves: { id: string; label: string; icon?: ReactNode }[]
+  allLabel: string
+  onSelectAll: () => void
+  onSelectLeaf: (id: string) => void
+}) {
+  // Default collapsed — user opens manually. Same contract as
+  // ItemsTreeNav.
+  const [expanded, setExpanded] = useState(false)
+  const hasLeaves = leaves.length > 0
+  const parentActive = active && !activeLeafId && (!expanded || !hasLeaves)
+  const allActive = active && !activeLeafId && expanded && hasLeaves
+
+  return (
+    <>
+      <button
+        type="button"
+        className={`settings-tab ${hasLeaves ? 'settings-tab-parent' : ''} ${parentActive ? 'active' : ''}`}
+        onClick={() => {
+          if (hasLeaves) setExpanded((v) => !v)
+          onSelectAll()
+        }}
+        aria-expanded={hasLeaves ? expanded : undefined}
+        aria-current={parentActive ? 'page' : undefined}
+      >
+        {icon}
+        <span>{label}</span>
+        {hasLeaves && <Chevron open={expanded} />}
+      </button>
+      {expanded && hasLeaves && (
+        <>
+          <button
+            type="button"
+            className={`settings-tab settings-tab-l1 settings-tab-all ${allActive ? 'active' : ''}`}
+            onClick={onSelectAll}
+            aria-current={allActive ? 'page' : undefined}
+          >
+            <span>{allLabel}</span>
+          </button>
+          {leaves.map((leaf) => {
+            const leafActive = active && activeLeafId === leaf.id
+            return (
+              <button
+                key={leaf.id}
+                type="button"
+                className={`settings-tab settings-tab-l1 ${leafActive ? 'active' : ''}`}
+                onClick={() => onSelectLeaf(leaf.id)}
+                aria-current={leafActive ? 'page' : undefined}
+              >
+                {leaf.icon}
+                <span>{leaf.label}</span>
+              </button>
+            )
+          })}
+        </>
+      )}
+    </>
+  )
+}
+
+// Spells sidebar — Spells parent + magic-school leaves. Schools come
+// from the catalog (sort_order) so the sidebar order mirrors the rest
+// of the UI; each leaf shows the school's icon tinted with its catalog
+// display_color so the row reads at a glance.
+function SpellsTreeNav({
+  active,
+  schoolFilter,
+  onSelectAll,
+  onSelectSchool,
+}: {
+  active: boolean
+  schoolFilter: string
+  onSelectAll: () => void
+  onSelectSchool: (id: string) => void
+}) {
+  const schools = useAsyncList<SpellSchool>(() => listSpellSchools())
+  const leaves = (schools ?? [])
+    .slice()
+    .sort((a, b) => a.sort_order - b.sort_order)
+    .map((s) => ({
+      id: s.id,
+      label: s.display_name,
+      icon: <SpellSchoolIcon id={s.id} color={s.display_color} />,
+    }))
+  return (
+    <FlatTreeNav
+      label="Spells"
+      icon={TAB_ICONS.spells}
+      active={active}
+      activeLeafId={schoolFilter}
+      leaves={leaves}
+      allLabel="All spells"
+      onSelectAll={onSelectAll}
+      onSelectLeaf={onSelectSchool}
+    />
+  )
+}
+
+// Recipes sidebar — Recipes parent + skill leaves. Skills are derived
+// from the recipe rows themselves (rather than from a catalog) so the
+// sidebar only shows skills that actually have recipes; dead leaves
+// would just frustrate the player. Labels reuse formatStation, the
+// same snake_case → Title Case helper the dropdown used.
+function RecipesTreeNav({
+  active,
+  skillFilter,
+  onSelectAll,
+  onSelectSkill,
+}: {
+  active: boolean
+  skillFilter: string
+  onSelectAll: () => void
+  onSelectSkill: (id: string) => void
+}) {
+  const recipes = useAsyncList<Recipe>(() => listRecipes())
+  const leaves = Array.from(
+    new Set((recipes ?? []).map((r) => r.skill).filter(Boolean)),
+  )
+    .sort()
+    .map((s) => ({ id: s, label: formatStation(s) }))
+  return (
+    <FlatTreeNav
+      label="Recipes"
+      icon={TAB_ICONS.recipes}
+      active={active}
+      activeLeafId={skillFilter}
+      leaves={leaves}
+      allLabel="All recipes"
+      onSelectAll={onSelectAll}
+      onSelectLeaf={onSelectSkill}
+    />
+  )
+}
+
 function ItemClassesSection() {
   const classes = useAsyncList<ItemClass>(() => listItemClasses())
   const subclasses = useAsyncList<ItemSubclass>(() => listItemSubclasses())
@@ -1786,7 +2179,9 @@ function RecipesSection() {
   const { gameId } = useParams<{ gameId: string }>()
   const recipes = useAsyncList<Recipe>(() => listRecipes())
   const items = useAsyncList<Item>(() => listItems())
-  const [skillFilter, setSkillFilter] = useUrlParam('skill')
+  // Skill is driven by the sidebar tree — still read for filtering, no
+  // setter exposed here.
+  const [skillFilter] = useUrlParam('skill')
   const [stationFilter, setStationFilter] = useUrlParam('station')
   const clearRecipeFilters = useClearUrlParams()
 
@@ -1794,14 +2189,8 @@ function RecipesSection() {
   const itemRarityById = new Map((items ?? []).map((i) => [i.id, i.rarity]))
   const nameOf = (id: string) => itemNameById.get(id) ?? id
 
-  // Skill + station options derived from the recipe rows. `formatStation`
-  // already handles the display formatting for both (snake_case → Title
-  // Case), so we reuse it for option labels.
-  const skillOptions = Array.from(
-    new Set((recipes ?? []).map((r) => r.skill).filter(Boolean)),
-  )
-    .sort()
-    .map((s) => ({ value: s, label: formatStation(s) }))
+  // Station options derived from the recipe rows. `formatStation`
+  // handles the display formatting (snake_case → Title Case).
   const stationOptions = Array.from(
     new Set((recipes ?? []).map((r) => r.station_tag).filter(Boolean)),
   )
@@ -1854,13 +2243,6 @@ function RecipesSection() {
         </p>
       </header>
       <div className="filter-bar" role="group" aria-label="Filter recipes">
-        <FilterSelect
-          label="Skill"
-          value={skillFilter}
-          onChange={setSkillFilter}
-          allLabel="All skills"
-          options={skillOptions}
-        />
         <FilterSelect
           label="Station"
           value={stationFilter}
@@ -2180,28 +2562,13 @@ function ItemsSection() {
   }
 
   // Filter state — backed by URL query params so the items page is
-  // shareable / bookmarkable. Empty string means "any" and is omitted
-  // from the URL. Subclass is dependent on class; selecting a class
-  // narrows the Subclass dropdown to that class's subclasses and clears
-  // any out-of-scope selection (see the useEffect below).
-  const [classFilter, setClassFilter] = useUrlParam('class')
-  const [subclassFilter, setSubclassFilter] = useUrlParam('subclass')
+  // shareable / bookmarkable. Class and subclass are driven by the
+  // sidebar tree (ItemsTreeNav); rarity stays in the filter bar since it
+  // cross-cuts class. Empty string means "any" and is omitted from URL.
+  const [classFilter] = useUrlParam('class')
+  const [subclassFilter] = useUrlParam('subclass')
   const [rarityFilter, setRarityFilter] = useUrlParam('rarity')
   const clearItemFilters = useClearUrlParams()
-
-  const subclassesForClass = (classes ?? []).length
-    ? (subclasses ?? []).filter(
-        (sc) => !classFilter || sc.item_class === classFilter,
-      )
-    : []
-
-  // Drop any subclass selection that no longer belongs to the picked class.
-  useEffect(() => {
-    if (!classFilter || !subclassFilter) return
-    const stillValid = subclassesForClass.some((sc) => sc.name === subclassFilter)
-    if (!stillValid) setSubclassFilter('')
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [classFilter])
 
   const filteredItems =
     items === null
@@ -2282,27 +2649,6 @@ function ItemsSection() {
         </p>
       </header>
       <div className="filter-bar" role="group" aria-label="Filter items">
-        <FilterSelect
-          label="Class"
-          value={classFilter}
-          onChange={setClassFilter}
-          allLabel="All classes"
-          options={(classes ?? [])
-            .slice()
-            .sort((a, b) => a.sort_order - b.sort_order)
-            .map((c) => ({ value: c.id, label: c.display_name }))}
-        />
-        <FilterSelect
-          label="Subclass"
-          value={subclassFilter}
-          onChange={setSubclassFilter}
-          allLabel="All subclasses"
-          disabled={subclassesForClass.length === 0}
-          options={subclassesForClass
-            .slice()
-            .sort((a, b) => a.display_name.localeCompare(b.display_name))
-            .map((sc) => ({ value: sc.name, label: sc.display_name }))}
-        />
         <FilterSelect
           label="Rarity"
           value={rarityFilter}
@@ -2525,7 +2871,9 @@ function SpellsSection() {
   // if the spell points at a damage_school not in the catalog.
   const damageTypes = useAsyncList<DamageType>(() => listDamageTypes())
   const [schoolFilter, setSchoolFilter] = useUrlParam('damage_school')
-  const [magicSchoolFilter, setMagicSchoolFilter] = useUrlParam('magic_school')
+  // Magic school is now driven by the sidebar tree — we still read it
+  // from the URL so filtering works, but no setter is exposed here.
+  const [magicSchoolFilter] = useUrlParam('magic_school')
   const [typeFilter, setTypeFilter] = useUrlParam('type')
   const clearSpellFilters = useClearUrlParams()
 
@@ -2540,14 +2888,6 @@ function SpellsSection() {
   )
     .sort()
     .map((s) => ({ value: s, label: capitalize(s) }))
-
-  // Magic-school options come from the catalog (sorted by sort_order)
-  // so the filter list mirrors the database tab ordering — Evocation
-  // first, Divination last — regardless of which spells are seeded.
-  const magicSchoolOptions = (magicSchools ?? [])
-    .slice()
-    .sort((a, b) => a.sort_order - b.sort_order)
-    .map((s) => ({ value: s.id, label: s.display_name }))
 
   // Type buckets the spell list into the three logical kinds: Heal (any
   // is_heal), Damage (has damage_school and not a heal), Other (buffs,
@@ -2631,13 +2971,6 @@ function SpellsSection() {
         </p>
       </header>
       <div className="filter-bar" role="group" aria-label="Filter spells">
-        <FilterSelect
-          label="Magic school"
-          value={magicSchoolFilter}
-          onChange={setMagicSchoolFilter}
-          allLabel="All magic schools"
-          options={magicSchoolOptions}
-        />
         <FilterSelect
           label="Damage school"
           value={schoolFilter}
