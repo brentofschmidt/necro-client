@@ -1021,6 +1021,49 @@ JOIN proficiency_definitions p ON p.key = v.prof_key;
 
 
 -- -----------------------------------------------------------------------------
+-- Loot tables
+-- -----------------------------------------------------------------------------
+
+-- A loot table is a weighted list of items a source (mob, chest, node -- defined
+-- later) drops when opened. Entries point at base ITEMS (gear, materials,
+-- consumables -- all just items), so one structure handles gear-focused or
+-- crafting-focused tables; the difference is only which items you list. Affixes
+-- roll separately onto the dropped instance (player DB) -- this only picks the
+-- base. weight is relative likelihood (all 1 = uniform for now; tier later). A
+-- drop_chance / rolls column can be added later for independent-roll modes
+-- without restructuring.
+CREATE TABLE loot_tables (
+    id   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    key  text NOT NULL UNIQUE,
+    name text NOT NULL,
+    description text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- Weighted rows of a loot table. min_qty/max_qty give a stack range (3-7 ore).
+CREATE TABLE loot_entries (
+    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    loot_table_id uuid NOT NULL REFERENCES loot_tables(id) ON DELETE CASCADE,
+    item_id       uuid NOT NULL REFERENCES items(id),
+    weight        int NOT NULL DEFAULT 1,           -- relative likelihood (uniform while all = 1)
+    min_qty       int NOT NULL DEFAULT 1,
+    max_qty       int NOT NULL DEFAULT 1,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_loot_entries_table ON loot_entries(loot_table_id);
+
+-- Sample table mixing a consumable, a weapon, and an armor piece (all weight 1).
+INSERT INTO loot_tables (key, name, description) VALUES
+    ('common_chest', 'Common Chest', 'A basic loot table for early-game containers.');
+INSERT INTO loot_entries (loot_table_id, item_id, weight, min_qty, max_qty) VALUES
+    ((SELECT id FROM loot_tables WHERE key='common_chest'), (SELECT id FROM items WHERE key='small_health_potion'), 1, 1, 3),
+    ((SELECT id FROM loot_tables WHERE key='common_chest'), (SELECT id FROM items WHERE key='iron_sword'), 1, 1, 1),
+    ((SELECT id FROM loot_tables WHERE key='common_chest'), (SELECT id FROM items WHERE key='leather_helmet'), 1, 1, 1);
+
+
+-- -----------------------------------------------------------------------------
 -- Storage types
 -- -----------------------------------------------------------------------------
 
@@ -1156,6 +1199,10 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON race_modifiers
     FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON magic_schools
     FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON loot_tables
+    FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON loot_entries
+    FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON storage_types
     FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON ability_proficiency_requirements
@@ -1240,6 +1287,8 @@ COMMENT ON TABLE proficiency_definitions IS 'A trainable proficiency (for exampl
 COMMENT ON TABLE proficiency_rank_modifiers IS 'Passive stat modifiers granted once a character reaches a given rank in a proficiency.';
 COMMENT ON TABLE ability_proficiency_requirements IS 'Gate: the minimum proficiency rank required to use an ability.';
 COMMENT ON TABLE race_definitions IS 'Playable races. Each grants small flavorful stat bonuses via race_modifiers; which race a character is lives in the player DB.';
+COMMENT ON TABLE loot_tables IS 'A weighted list of items a source drops when opened. Entries point at base items; affixes roll separately onto the dropped instance.';
+COMMENT ON TABLE loot_entries IS 'Weighted rows of a loot table: which item, relative weight, and a min/max stack quantity. weight uniform (1) for now; tier later.';
 COMMENT ON TABLE storage_types IS 'Kinds of storage spaces and their rules (the content side of a universal container model). Runtime container_instances (player DB) point here for behavior; flags encode the full-loot rules (weight_limited, drops_on_death, lootable_by_others, persistent).';
 COMMENT ON TABLE magic_schools IS 'Content/lore extension of the eight school proficiencies (1:1 via proficiency_id). Holds player-facing tagline, lore, and theming; the proficiency row remains the mechanical source of truth.';
 COMMENT ON TABLE race_modifiers IS 'Flat stat bonuses a race grants (mirrors proficiency_rank_modifiers). Resolved by Game.Core as generated modifiers alongside gear, buffs, and attributes.';
