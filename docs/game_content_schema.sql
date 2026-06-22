@@ -1029,9 +1029,10 @@ JOIN proficiency_definitions p ON p.key = v.prof_key;
 -- consumables -- all just items), so one structure handles gear-focused or
 -- crafting-focused tables; the difference is only which items you list. Affixes
 -- roll separately onto the dropped instance (player DB) -- this only picks the
--- base. weight is relative likelihood (all 1 = uniform for now; tier later). A
--- drop_chance / rolls column can be added later for independent-roll modes
--- without restructuring.
+-- base. Two independent levers per entry: weight = relative odds IF the table
+-- picks one (weighted-pick); drop_chance = standalone 0..1 odds this entry drops
+-- on its own (independent mode, default 1.0 = always). A table can use either or
+-- both. A 'rolls' count can be added later for multi-pick without restructuring.
 CREATE TABLE loot_tables (
     id   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     key  text NOT NULL UNIQUE,
@@ -1046,7 +1047,8 @@ CREATE TABLE loot_entries (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     loot_table_id uuid NOT NULL REFERENCES loot_tables(id) ON DELETE CASCADE,
     item_id       uuid NOT NULL REFERENCES items(id),
-    weight        int NOT NULL DEFAULT 1,           -- relative likelihood (uniform while all = 1)
+    weight        int NOT NULL DEFAULT 1,           -- relative likelihood IF the table picks by weight
+    drop_chance   numeric NOT NULL DEFAULT 1.0,      -- standalone 0..1 chance this entry drops (1.0 = always)
     min_qty       int NOT NULL DEFAULT 1,
     max_qty       int NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -1288,7 +1290,7 @@ COMMENT ON TABLE proficiency_rank_modifiers IS 'Passive stat modifiers granted o
 COMMENT ON TABLE ability_proficiency_requirements IS 'Gate: the minimum proficiency rank required to use an ability.';
 COMMENT ON TABLE race_definitions IS 'Playable races. Each grants small flavorful stat bonuses via race_modifiers; which race a character is lives in the player DB.';
 COMMENT ON TABLE loot_tables IS 'A weighted list of items a source drops when opened. Entries point at base items; affixes roll separately onto the dropped instance.';
-COMMENT ON TABLE loot_entries IS 'Weighted rows of a loot table: which item, relative weight, and a min/max stack quantity. weight uniform (1) for now; tier later.';
+COMMENT ON TABLE loot_entries IS 'Rows of a loot table: which item, relative weight (weighted-pick), standalone drop_chance (independent, default 1.0), and min/max stack quantity.';
 COMMENT ON TABLE storage_types IS 'Kinds of storage spaces and their rules (the content side of a universal container model). Runtime container_instances (player DB) point here for behavior; flags encode the full-loot rules (weight_limited, drops_on_death, lootable_by_others, persistent).';
 COMMENT ON TABLE magic_schools IS 'Content/lore extension of the eight school proficiencies (1:1 via proficiency_id). Holds player-facing tagline, lore, and theming; the proficiency row remains the mechanical source of truth.';
 COMMENT ON TABLE race_modifiers IS 'Flat stat bonuses a race grants (mirrors proficiency_rank_modifiers). Resolved by Game.Core as generated modifiers alongside gear, buffs, and attributes.';
