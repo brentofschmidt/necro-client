@@ -859,7 +859,21 @@ INSERT INTO proficiency_definitions (key, name, description) VALUES
     ('evocation',     'Evocation',     'Raw elemental and energy damage.'),
     ('illusion',      'Illusion',      'Deception and illusion magic.'),
     ('necromancy',    'Necromancy',    'Death and undeath magic.'),
-    ('transmutation', 'Transmutation', 'Transformation and alteration magic.');
+    ('transmutation', 'Transmutation', 'Transformation and alteration magic.'),
+    -- gathering professions (gate harvesting from world resource nodes)
+    ('mining',         'Mining',         'Extracting ore, stone, and gems from the world.'),
+    ('woodcutting',    'Woodcutting',    'Felling trees for logs and lumber.'),
+    ('herbalism',      'Herbalism',      'Gathering herbs and alchemical reagents.'),
+    ('skinning',       'Skinning',       'Harvesting hides and leather from creatures.'),
+    ('fishing',        'Fishing',        'Catching fish and aquatic resources.'),
+    -- production professions (gate recipes by rank)
+    ('blacksmithing',  'Blacksmithing',  'Forging metal weapons and heavy armor.'),
+    ('leatherworking', 'Leatherworking', 'Working hides into leather armor and goods.'),
+    ('tailoring',      'Tailoring',      'Weaving cloth armor and goods.'),
+    ('woodworking',    'Woodworking',    'Crafting bows, staves, and wooden items.'),
+    ('alchemy',        'Alchemy',        'Brewing potions and elixirs.'),
+    ('cooking',        'Cooking',        'Preparing food and consumables.'),
+    ('jewelcrafting',  'Jewelcrafting',  'Crafting rings and amulets, and cutting gems.');
 
 -- -----------------------------------------------------------------------------
 -- Weapon basic abilities: one per weapon type, the default attack every item of
@@ -1021,6 +1035,59 @@ JOIN proficiency_definitions p ON p.key = v.prof_key;
 
 
 -- -----------------------------------------------------------------------------
+-- Crafting recipes
+-- -----------------------------------------------------------------------------
+
+-- A recipe turns input items into an output item. Inputs and output are all just
+-- ITEMS (materials are items), so one structure covers any craft. Gated by an
+-- optional crafting proficiency + rank (reuses the proficiency system). Output is
+-- a fixed base item for now -- the reliable, deterministic craft that anchors the
+-- economy. FORWARD-COMPATIBLE: a crafted item is just an item instance, so rolling
+-- affixes onto crafted output (or quality tiers) can be added later without
+-- restructuring -- e.g. a rolls_affixes flag, the crafting code invoking the affix
+-- roller. success_chance is 0..1 (default 1.0 = always succeeds).
+CREATE TABLE recipes (
+    id   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    key  text NOT NULL UNIQUE,
+    name text NOT NULL,
+    output_item_id uuid NOT NULL REFERENCES items(id),
+    output_qty     int NOT NULL DEFAULT 1,
+    required_proficiency_id   uuid REFERENCES proficiency_definitions(id),  -- optional gate
+    required_proficiency_rank int,                                          -- both set or both null
+    success_chance numeric NOT NULL DEFAULT 1.0,    -- 0..1 (1.0 = always succeeds)
+    description text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT recipe_prof_pair CHECK ((required_proficiency_id IS NULL) = (required_proficiency_rank IS NULL))
+);
+
+-- Input items a recipe consumes (quantity each).
+CREATE TABLE recipe_ingredients (
+    id        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    recipe_id uuid NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+    item_id   uuid NOT NULL REFERENCES items(id),
+    quantity  int NOT NULL DEFAULT 1,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_recipe_ingredients_recipe ON recipe_ingredients(recipe_id);
+
+-- Sample materials (items of type material) + two recipes that consume them.
+INSERT INTO items
+    (key, name, item_type_id, category_id, weight, stack_max, base_value, droppable, tradeable, description) VALUES
+    ('iron_ingot',   'Iron Ingot',   (SELECT id FROM item_types WHERE key='material'), (SELECT id FROM item_categories WHERE key='reagent'), 0.5, 50, 3, true, true, 'Refined iron, used in smithing.'),
+    ('crimson_herb', 'Crimson Herb', (SELECT id FROM item_types WHERE key='material'), (SELECT id FROM item_categories WHERE key='reagent'), 0.1, 50, 2, true, true, 'A medicinal herb used in alchemy.');
+
+INSERT INTO recipes (key, name, output_item_id, output_qty, required_proficiency_id, required_proficiency_rank, description) VALUES
+    ('craft_iron_sword', 'Forge Iron Sword', (SELECT id FROM items WHERE key='iron_sword'), 1, (SELECT id FROM proficiency_definitions WHERE key='blacksmithing'), 5, 'Forge an iron sword from iron ingots.'),
+    ('brew_health_potion', 'Brew Health Potion', (SELECT id FROM items WHERE key='small_health_potion'), 1, (SELECT id FROM proficiency_definitions WHERE key='alchemy'), 5, 'Brew a small health potion from herbs.');
+
+INSERT INTO recipe_ingredients (recipe_id, item_id, quantity) VALUES
+    ((SELECT id FROM recipes WHERE key='craft_iron_sword'), (SELECT id FROM items WHERE key='iron_ingot'), 2),
+    ((SELECT id FROM recipes WHERE key='brew_health_potion'), (SELECT id FROM items WHERE key='crimson_herb'), 2);
+
+
+-- -----------------------------------------------------------------------------
 -- Loot tables
 -- -----------------------------------------------------------------------------
 
@@ -1063,6 +1130,52 @@ INSERT INTO loot_entries (loot_table_id, item_id, weight, min_qty, max_qty) VALU
     ((SELECT id FROM loot_tables WHERE key='common_chest'), (SELECT id FROM items WHERE key='small_health_potion'), 1, 1, 3),
     ((SELECT id FROM loot_tables WHERE key='common_chest'), (SELECT id FROM items WHERE key='iron_sword'), 1, 1, 1),
     ((SELECT id FROM loot_tables WHERE key='common_chest'), (SELECT id FROM items WHERE key='leather_helmet'), 1, 1, 1);
+
+
+-- -----------------------------------------------------------------------------
+-- Resource nodes
+-- -----------------------------------------------------------------------------
+
+-- DEFINITION of a gatherable node (an ore vein, a tree). Like items, the node has
+-- a definition here and runtime INSTANCES in world/game state later (this vein at
+-- (x,y), depleted, respawn timer). The definition is thin: a gathering-proficiency
+-- gate, a loot_table for the yield (reuses loot -- "mostly ore, sometimes a gem"
+-- is just a weighted item list), gather timing, and charge-based depletion
+-- (max_charges gathers before it depletes, then respawns). Tier is a descriptive
+-- label; real tiering = distinct nodes at escalating rank gates + richer loot.
+-- INERT until the world/node-instance layer exists (same as gathering profs).
+CREATE TABLE resource_nodes (
+    id   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    key  text NOT NULL UNIQUE,
+    name text NOT NULL,
+    required_proficiency_id   uuid NOT NULL REFERENCES proficiency_definitions(id),  -- the gathering skill
+    required_proficiency_rank int NOT NULL DEFAULT 1,
+    loot_table_id   uuid NOT NULL REFERENCES loot_tables(id),  -- what it yields per gather
+    gather_time_secs numeric NOT NULL DEFAULT 3,    -- time per gather action
+    max_charges     int NOT NULL DEFAULT 3,         -- gathers before the node depletes
+    respawn_secs    int NOT NULL DEFAULT 60,        -- respawn delay after depletion
+    tier            int NOT NULL DEFAULT 1,         -- descriptive tier label
+    description text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- Sample: raw ores (materials) + per-vein yield tables + two tiered mining nodes.
+INSERT INTO items
+    (key, name, item_type_id, category_id, weight, stack_max, base_value, droppable, tradeable, description) VALUES
+    ('copper_ore', 'Copper Ore', (SELECT id FROM item_types WHERE key='material'), (SELECT id FROM item_categories WHERE key='reagent'), 0.4, 50, 1, true, true, 'Raw copper ore; smelt into bars.'),
+    ('iron_ore',   'Iron Ore',   (SELECT id FROM item_types WHERE key='material'), (SELECT id FROM item_categories WHERE key='reagent'), 0.5, 50, 2, true, true, 'Raw iron ore; smelt into ingots.');
+
+INSERT INTO loot_tables (key, name, description) VALUES
+    ('copper_vein_yield', 'Copper Vein Yield', 'What a copper vein drops per gather.'),
+    ('iron_vein_yield',   'Iron Vein Yield',   'What an iron vein drops per gather.');
+INSERT INTO loot_entries (loot_table_id, item_id, weight, min_qty, max_qty) VALUES
+    ((SELECT id FROM loot_tables WHERE key='copper_vein_yield'), (SELECT id FROM items WHERE key='copper_ore'), 1, 1, 3),
+    ((SELECT id FROM loot_tables WHERE key='iron_vein_yield'), (SELECT id FROM items WHERE key='iron_ore'), 1, 1, 3);
+
+INSERT INTO resource_nodes (key, name, required_proficiency_id, required_proficiency_rank, loot_table_id, gather_time_secs, max_charges, respawn_secs, tier, description) VALUES
+    ('copper_vein', 'Copper Vein', (SELECT id FROM proficiency_definitions WHERE key='mining'), 1, (SELECT id FROM loot_tables WHERE key='copper_vein_yield'), 3, 3, 60, 1, 'A basic copper vein.'),
+    ('iron_vein',   'Iron Vein',   (SELECT id FROM proficiency_definitions WHERE key='mining'), 10, (SELECT id FROM loot_tables WHERE key='iron_vein_yield'), 4, 3, 90, 2, 'A richer iron vein for trained miners.');
 
 
 -- -----------------------------------------------------------------------------
@@ -1201,9 +1314,15 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON race_modifiers
     FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON magic_schools
     FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON recipes
+    FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON recipe_ingredients
+    FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON loot_tables
     FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON loot_entries
+    FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON resource_nodes
     FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON storage_types
     FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
@@ -1289,8 +1408,11 @@ COMMENT ON TABLE proficiency_definitions IS 'A trainable proficiency (for exampl
 COMMENT ON TABLE proficiency_rank_modifiers IS 'Passive stat modifiers granted once a character reaches a given rank in a proficiency.';
 COMMENT ON TABLE ability_proficiency_requirements IS 'Gate: the minimum proficiency rank required to use an ability.';
 COMMENT ON TABLE race_definitions IS 'Playable races. Each grants small flavorful stat bonuses via race_modifiers; which race a character is lives in the player DB.';
+COMMENT ON TABLE recipes IS 'A craft: input items -> a fixed output item, optionally gated by a crafting proficiency + rank. success_chance default 1.0. Forward-compatible to affix/quality-tier crafted output.';
+COMMENT ON TABLE recipe_ingredients IS 'Input items a recipe consumes, with quantity each. Materials are just items.';
 COMMENT ON TABLE loot_tables IS 'A weighted list of items a source drops when opened. Entries point at base items; affixes roll separately onto the dropped instance.';
 COMMENT ON TABLE loot_entries IS 'Rows of a loot table: which item, relative weight (weighted-pick), standalone drop_chance (independent, default 1.0), and min/max stack quantity.';
+COMMENT ON TABLE resource_nodes IS 'Definition of a gatherable node (ore vein, tree). Gathering-proficiency gate + a loot_table yield + charge-based depletion/respawn. Runtime placements/depletion are world-DB instance state.';
 COMMENT ON TABLE storage_types IS 'Kinds of storage spaces and their rules (the content side of a universal container model). Runtime container_instances (player DB) point here for behavior; flags encode the full-loot rules (weight_limited, drops_on_death, lootable_by_others, persistent).';
 COMMENT ON TABLE magic_schools IS 'Content/lore extension of the eight school proficiencies (1:1 via proficiency_id). Holds player-facing tagline, lore, and theming; the proficiency row remains the mechanical source of truth.';
 COMMENT ON TABLE race_modifiers IS 'Flat stat bonuses a race grants (mirrors proficiency_rank_modifiers). Resolved by Game.Core as generated modifiers alongside gear, buffs, and attributes.';
