@@ -781,6 +781,7 @@ CREATE TABLE abilities (
     cost_resource_id uuid REFERENCES resource_definitions(id),  -- which resource (stamina/mana/health); null = free
     target_type_id uuid NOT NULL REFERENCES target_types(id),  -- self/ally/enemy/ground/none
     range         numeric,
+    xp_multiplier numeric NOT NULL DEFAULT 1.0,    -- scales combat XP from this ability (1.0 = base 1:1 with damage)
     icon_ref      text,
     description   text,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -1044,6 +1045,7 @@ CREATE TABLE recipes (
     required_proficiency_id   uuid REFERENCES proficiency_definitions(id),  -- optional gate
     required_proficiency_rank int,                                          -- both set or both null
     success_chance numeric NOT NULL DEFAULT 1.0,    -- 0..1 (1.0 = always succeeds)
+    craft_xp       int NOT NULL DEFAULT 0,          -- XP granted to the crafting proficiency per craft
     description text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
@@ -1067,10 +1069,10 @@ INSERT INTO items
     ('iron_ingot',   'Iron Ingot',   (SELECT id FROM item_types WHERE key='material'), (SELECT id FROM item_categories WHERE key='reagent'), 0.5, 50, 3, true, true, 'Refined iron, used in smithing.'),
     ('crimson_herb', 'Crimson Herb', (SELECT id FROM item_types WHERE key='material'), (SELECT id FROM item_categories WHERE key='reagent'), 0.1, 50, 2, true, true, 'A medicinal herb used in alchemy.');
 
-INSERT INTO recipes (key, name, output_item_id, output_qty, required_proficiency_id, required_proficiency_rank, description) VALUES
-    ('craft_iron_sword', 'Forge Iron Sword', (SELECT id FROM items WHERE key='iron_sword'), 1, (SELECT id FROM proficiency_definitions WHERE key='blacksmithing'), 5, 'Forge an iron sword from iron ingots.'),
-    ('brew_health_potion', 'Brew Health Potion', (SELECT id FROM items WHERE key='small_health_potion'), 1, (SELECT id FROM proficiency_definitions WHERE key='alchemy'), 5, 'Brew a small health potion from herbs.'),
-    ('smelt_iron_ingot', 'Smelt Iron Ingot', (SELECT id FROM items WHERE key='iron_ingot'), 1, (SELECT id FROM proficiency_definitions WHERE key='blacksmithing'), 1, 'Smelt iron ore into a usable ingot.');
+INSERT INTO recipes (key, name, output_item_id, output_qty, required_proficiency_id, required_proficiency_rank, craft_xp, description) VALUES
+    ('craft_iron_sword', 'Forge Iron Sword', (SELECT id FROM items WHERE key='iron_sword'), 1, (SELECT id FROM proficiency_definitions WHERE key='blacksmithing'), 5, 40, 'Forge an iron sword from iron ingots.'),
+    ('brew_health_potion', 'Brew Health Potion', (SELECT id FROM items WHERE key='small_health_potion'), 1, (SELECT id FROM proficiency_definitions WHERE key='alchemy'), 5, 25, 'Brew a small health potion from herbs.'),
+    ('smelt_iron_ingot', 'Smelt Iron Ingot', (SELECT id FROM items WHERE key='iron_ingot'), 1, (SELECT id FROM proficiency_definitions WHERE key='blacksmithing'), 1, 15, 'Smelt iron ore into a usable ingot.');
 
 INSERT INTO recipe_ingredients (recipe_id, item_id, quantity) VALUES
     ((SELECT id FROM recipes WHERE key='craft_iron_sword'), (SELECT id FROM items WHERE key='iron_ingot'), 2),
@@ -1146,6 +1148,7 @@ CREATE TABLE resource_nodes (
     max_charges     int NOT NULL DEFAULT 3,         -- gathers before the node depletes
     respawn_secs    int NOT NULL DEFAULT 60,        -- respawn delay after depletion
     tier            int NOT NULL DEFAULT 1,         -- descriptive tier label
+    gather_xp       int NOT NULL DEFAULT 0,         -- XP granted to the gathering proficiency per gather
     description text,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
@@ -1164,17 +1167,17 @@ INSERT INTO loot_entries (loot_table_id, item_id, weight, min_qty, max_qty) VALU
     ((SELECT id FROM loot_tables WHERE key='copper_vein_yield'), (SELECT id FROM items WHERE key='copper_ore'), 1, 1, 3),
     ((SELECT id FROM loot_tables WHERE key='iron_vein_yield'), (SELECT id FROM items WHERE key='iron_ore'), 1, 1, 3);
 
-INSERT INTO resource_nodes (key, name, required_proficiency_id, required_proficiency_rank, loot_table_id, gather_time_secs, max_charges, respawn_secs, tier, description) VALUES
-    ('copper_vein', 'Copper Vein', (SELECT id FROM proficiency_definitions WHERE key='mining'), 1, (SELECT id FROM loot_tables WHERE key='copper_vein_yield'), 3, 3, 60, 1, 'A basic copper vein.'),
-    ('iron_vein',   'Iron Vein',   (SELECT id FROM proficiency_definitions WHERE key='mining'), 10, (SELECT id FROM loot_tables WHERE key='iron_vein_yield'), 4, 3, 90, 2, 'A richer iron vein for trained miners.');
+INSERT INTO resource_nodes (key, name, required_proficiency_id, required_proficiency_rank, loot_table_id, gather_time_secs, max_charges, respawn_secs, tier, gather_xp, description) VALUES
+    ('copper_vein', 'Copper Vein', (SELECT id FROM proficiency_definitions WHERE key='mining'), 1, (SELECT id FROM loot_tables WHERE key='copper_vein_yield'), 3, 3, 60, 1, 18, 'A basic copper vein.'),
+    ('iron_vein',   'Iron Vein',   (SELECT id FROM proficiency_definitions WHERE key='mining'), 10, (SELECT id FROM loot_tables WHERE key='iron_vein_yield'), 4, 3, 90, 2, 35, 'A richer iron vein for trained miners.');
 
 -- Herbalism node so crimson_herb (an alchemy ingredient) is actually gatherable.
 INSERT INTO loot_tables (key, name, description) VALUES
     ('herb_patch_yield', 'Herb Patch Yield', 'What a herb patch drops per gather.');
 INSERT INTO loot_entries (loot_table_id, item_id, weight, min_qty, max_qty) VALUES
     ((SELECT id FROM loot_tables WHERE key='herb_patch_yield'), (SELECT id FROM items WHERE key='crimson_herb'), 1, 1, 2);
-INSERT INTO resource_nodes (key, name, required_proficiency_id, required_proficiency_rank, loot_table_id, gather_time_secs, max_charges, respawn_secs, tier, description) VALUES
-    ('herb_patch', 'Crimson Herb Patch', (SELECT id FROM proficiency_definitions WHERE key='herbalism'), 1, (SELECT id FROM loot_tables WHERE key='herb_patch_yield'), 2, 2, 45, 1, 'A patch of crimson herbs.');
+INSERT INTO resource_nodes (key, name, required_proficiency_id, required_proficiency_rank, loot_table_id, gather_time_secs, max_charges, respawn_secs, tier, gather_xp, description) VALUES
+    ('herb_patch', 'Crimson Herb Patch', (SELECT id FROM proficiency_definitions WHERE key='herbalism'), 1, (SELECT id FROM loot_tables WHERE key='herb_patch_yield'), 2, 2, 45, 1, 20, 'A patch of crimson herbs.');
 
 
 -- -----------------------------------------------------------------------------
@@ -1548,17 +1551,17 @@ COMMENT ON TABLE affix_tags IS 'Which item-tags an affix may roll on, with optio
 COMMENT ON TABLE effect_definitions IS 'A buff, debuff, dot, hot, or aura template: duration, tick cadence, snapshot flag, and stacking behavior. Persistent payloads go in effect_modifiers, periodic payloads in effect_periodics.';
 COMMENT ON TABLE effect_modifiers IS 'Persistent stat modifiers an effect applies while active: the sits-there half of an effect.';
 COMMENT ON TABLE effect_periodics IS 'Periodic per-tick payloads an effect fires (DoT, HoT, resource-over-time). Magnitude is a per-second rate; a tick deals rate times tick_secs.';
-COMMENT ON TABLE abilities IS 'Activatable ability definition (cast time, cooldown, gcd, stamina cost, target type, range). Used by players, by weapons (granted primary), and by consumables (on use).';
+COMMENT ON TABLE abilities IS 'Activatable ability definition (cast time, cooldown, gcd, stamina cost, target type, range). Used by players, by weapons (granted primary), and by consumables (on use). xp_multiplier scales combat XP earned (1.0 = base 1:1 with damage; runtime player/event bonuses stack on top).';
 COMMENT ON TABLE ability_effects IS 'Ordered list of payloads an ability performs (damage, heal, apply_effect), each with the shared base plus scaling magnitude shape.';
 COMMENT ON TABLE ability_tags IS 'Many-to-many link between abilities and tags.';
 COMMENT ON TABLE proficiency_definitions IS 'A trainable proficiency (for example one-handed, fire magic) that gates abilities and grants passive modifiers per rank.';
 COMMENT ON TABLE ability_proficiency_requirements IS 'Gate: the minimum proficiency rank required to use an ability.';
 COMMENT ON TABLE race_definitions IS 'Playable races. Each grants small flavorful stat bonuses via race_modifiers; which race a character is lives in the player DB.';
-COMMENT ON TABLE recipes IS 'A craft: input items -> a fixed output item, optionally gated by a crafting proficiency + rank. success_chance default 1.0. Forward-compatible to affix/quality-tier crafted output.';
+COMMENT ON TABLE recipes IS 'A craft: input items -> a fixed output item, optionally gated by a crafting proficiency + rank. success_chance default 1.0. craft_xp trains the crafting proficiency. Forward-compatible to affix/quality-tier crafted output.';
 COMMENT ON TABLE recipe_ingredients IS 'Input items a recipe consumes, with quantity each. Materials are just items.';
 COMMENT ON TABLE loot_tables IS 'A weighted list of items a source drops when opened. Entries point at base items; affixes roll separately onto the dropped instance.';
 COMMENT ON TABLE loot_entries IS 'Rows of a loot table: which item, relative weight (weighted-pick), standalone drop_chance (independent, default 1.0), and min/max stack quantity.';
-COMMENT ON TABLE resource_nodes IS 'Definition of a gatherable node (ore vein, tree). Gathering-proficiency gate + a loot_table yield + charge-based depletion/respawn. Runtime placements/depletion are world-DB instance state.';
+COMMENT ON TABLE resource_nodes IS 'Definition of a gatherable node (ore vein, tree). Gathering-proficiency gate + a loot_table yield + charge-based depletion/respawn + gather_xp granted per gather. Runtime placements/depletion are world-DB instance state.';
 COMMENT ON TABLE creature_types IS 'Creature type vocabulary (humanoid, beast, undead, ...); one per NPC, lets effects target a type.';
 COMMENT ON TABLE npc_definitions IS 'Definition of a creature KIND (stats + abilities + loot + identity). Runtime instances (position, current HP, AI, spawning) are game-state, not here.';
 COMMENT ON TABLE npc_stats IS 'An NPC base statline as (stat, value) pairs on the shared stat registry; runtime modifiers apply on top.';
