@@ -236,7 +236,8 @@ INSERT INTO stat_definitions (key, name, value_type_id, default_val, min_val, ma
     ('crit_damage',       'Crit Damage',        (SELECT id FROM stat_value_types WHERE key='percent'), 0.5,  0, NULL, false, 'Bonus damage on a critical strike (0.5 = +50%); applies to any attack or spell.'),
     ('haste',             'Haste',              (SELECT id FROM stat_value_types WHERE key='percent'), 0,    0, NULL, false, 'Increases attack speed and cast speed.'),
     ('armor',             'Armor',              (SELECT id FROM stat_value_types WHERE key='float'), 0,    0, NULL, false, 'Flat physical damage mitigation.'),
-    ('dodge_chance',      'Dodge Chance',       (SELECT id FROM stat_value_types WHERE key='percent'), 0,    0, 1,    false, 'Chance to fully avoid an incoming attack.');
+    ('dodge_chance',      'Dodge Chance',       (SELECT id FROM stat_value_types WHERE key='percent'), 0,    0, 1,    false, 'Chance to fully avoid an incoming attack.'),
+    ('willpower',         'Willpower',          (SELECT id FROM stat_value_types WHERE key='percent'), 0,    0, 0.75, false, 'Reduces the duration of crowd control (stun/root/silence/etc.) on you. Driven by Charisma.');
 
 -- Utility stats
 INSERT INTO stat_definitions (key, name, value_type_id, default_val, min_val, max_val, is_attribute, description) VALUES
@@ -298,7 +299,8 @@ INSERT INTO attribute_derivations (source_stat_id, target_stat_id, modifier_type
     ((SELECT id FROM stat_definitions WHERE key='dexterity'), (SELECT id FROM stat_definitions WHERE key='ranged_power'), (SELECT id FROM modifier_types WHERE key='flat'), 2, 1),  -- +2 ranged power per DEX
     ((SELECT id FROM stat_definitions WHERE key='dexterity'), (SELECT id FROM stat_definitions WHERE key='crit_chance'), (SELECT id FROM modifier_types WHERE key='flat'), 0.005, 1),  -- +0.5% crit chance per DEX
     ((SELECT id FROM stat_definitions WHERE key='dexterity'), (SELECT id FROM stat_definitions WHERE key='dodge_chance'), (SELECT id FROM modifier_types WHERE key='flat'), 0.003, 1),  -- +0.3% dodge per DEX
-    ((SELECT id FROM stat_definitions WHERE key='wisdom'), (SELECT id FROM stat_definitions WHERE key='mana_regen'), (SELECT id FROM modifier_types WHERE key='flat'), 0.5, 1);  -- +0.5 mana/sec per WIS
+    ((SELECT id FROM stat_definitions WHERE key='wisdom'), (SELECT id FROM stat_definitions WHERE key='mana_regen'), (SELECT id FROM modifier_types WHERE key='flat'), 0.5, 1),  -- +0.5 mana/sec per WIS
+    ((SELECT id FROM stat_definitions WHERE key='charisma'), (SELECT id FROM stat_definitions WHERE key='willpower'), (SELECT id FROM modifier_types WHERE key='flat'), 0.005, 1);  -- +0.5% CC-duration reduction per CHA
 
 
 -- Resource registry: declares which (max, regen) stat pair forms a depleting
@@ -915,19 +917,6 @@ WHERE a.key = CASE p.key
     WHEN 'shield'  THEN 'shield_bash'
 END;
 
--- Passive modifiers granted once a character reaches min_rank.
-CREATE TABLE proficiency_rank_modifiers (
-    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    proficiency_id  uuid NOT NULL REFERENCES proficiency_definitions(id) ON DELETE CASCADE,
-    min_rank        int NOT NULL,
-    stat_id         uuid NOT NULL REFERENCES stat_definitions(id),
-    modifier_type_id uuid NOT NULL REFERENCES modifier_types(id),
-    value           numeric NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX ix_prof_rank_mods_prof ON proficiency_rank_modifiers(proficiency_id);
-
 -- Ability unlock gate: ability requires min_rank in a proficiency.
 CREATE TABLE ability_proficiency_requirements (
     id  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -964,8 +953,8 @@ INSERT INTO race_definitions (key, name, sort_order, description) VALUES
     ('halfling', 'Halfling', 5, 'Small and nimble; harder to pin down.'),
     ('gnome',    'Gnome',    6, 'Insightful tinkerers; superior mana sustain.');
 
--- Flat stat bonuses a race grants (mirrors proficiency_rank_modifiers). Resolved
--- by Game.Core as generated modifiers alongside gear, buffs, and attributes.
+-- Flat stat bonuses a race grants. Resolved by Game.Core as generated modifiers
+-- alongside gear, buffs, and attributes (same shape as attribute_derivations).
 CREATE TABLE race_modifiers (
     id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     race_id          uuid NOT NULL REFERENCES race_definitions(id) ON DELETE CASCADE,
@@ -1080,11 +1069,13 @@ INSERT INTO items
 
 INSERT INTO recipes (key, name, output_item_id, output_qty, required_proficiency_id, required_proficiency_rank, description) VALUES
     ('craft_iron_sword', 'Forge Iron Sword', (SELECT id FROM items WHERE key='iron_sword'), 1, (SELECT id FROM proficiency_definitions WHERE key='blacksmithing'), 5, 'Forge an iron sword from iron ingots.'),
-    ('brew_health_potion', 'Brew Health Potion', (SELECT id FROM items WHERE key='small_health_potion'), 1, (SELECT id FROM proficiency_definitions WHERE key='alchemy'), 5, 'Brew a small health potion from herbs.');
+    ('brew_health_potion', 'Brew Health Potion', (SELECT id FROM items WHERE key='small_health_potion'), 1, (SELECT id FROM proficiency_definitions WHERE key='alchemy'), 5, 'Brew a small health potion from herbs.'),
+    ('smelt_iron_ingot', 'Smelt Iron Ingot', (SELECT id FROM items WHERE key='iron_ingot'), 1, (SELECT id FROM proficiency_definitions WHERE key='blacksmithing'), 1, 'Smelt iron ore into a usable ingot.');
 
 INSERT INTO recipe_ingredients (recipe_id, item_id, quantity) VALUES
     ((SELECT id FROM recipes WHERE key='craft_iron_sword'), (SELECT id FROM items WHERE key='iron_ingot'), 2),
-    ((SELECT id FROM recipes WHERE key='brew_health_potion'), (SELECT id FROM items WHERE key='crimson_herb'), 2);
+    ((SELECT id FROM recipes WHERE key='brew_health_potion'), (SELECT id FROM items WHERE key='crimson_herb'), 2),
+    ((SELECT id FROM recipes WHERE key='smelt_iron_ingot'), (SELECT id FROM items WHERE key='iron_ore'), 2);
 
 
 -- -----------------------------------------------------------------------------
@@ -1176,6 +1167,85 @@ INSERT INTO loot_entries (loot_table_id, item_id, weight, min_qty, max_qty) VALU
 INSERT INTO resource_nodes (key, name, required_proficiency_id, required_proficiency_rank, loot_table_id, gather_time_secs, max_charges, respawn_secs, tier, description) VALUES
     ('copper_vein', 'Copper Vein', (SELECT id FROM proficiency_definitions WHERE key='mining'), 1, (SELECT id FROM loot_tables WHERE key='copper_vein_yield'), 3, 3, 60, 1, 'A basic copper vein.'),
     ('iron_vein',   'Iron Vein',   (SELECT id FROM proficiency_definitions WHERE key='mining'), 10, (SELECT id FROM loot_tables WHERE key='iron_vein_yield'), 4, 3, 90, 2, 'A richer iron vein for trained miners.');
+
+-- Herbalism node so crimson_herb (an alchemy ingredient) is actually gatherable.
+INSERT INTO loot_tables (key, name, description) VALUES
+    ('herb_patch_yield', 'Herb Patch Yield', 'What a herb patch drops per gather.');
+INSERT INTO loot_entries (loot_table_id, item_id, weight, min_qty, max_qty) VALUES
+    ((SELECT id FROM loot_tables WHERE key='herb_patch_yield'), (SELECT id FROM items WHERE key='crimson_herb'), 1, 1, 2);
+INSERT INTO resource_nodes (key, name, required_proficiency_id, required_proficiency_rank, loot_table_id, gather_time_secs, max_charges, respawn_secs, tier, description) VALUES
+    ('herb_patch', 'Crimson Herb Patch', (SELECT id FROM proficiency_definitions WHERE key='herbalism'), 1, (SELECT id FROM loot_tables WHERE key='herb_patch_yield'), 2, 2, 45, 1, 'A patch of crimson herbs.');
+
+
+-- -----------------------------------------------------------------------------
+-- NPCs / creatures (definitions only)
+-- -----------------------------------------------------------------------------
+
+-- Creature type vocabulary (single type per NPC; lets effects target e.g. undead).
+CREATE TABLE creature_types (
+    id   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    key  text NOT NULL UNIQUE,        -- 'humanoid','beast','undead',...
+    name text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO creature_types (key, name) VALUES
+    ('humanoid','Humanoid'), ('beast','Beast'), ('undead','Undead'),
+    ('elemental','Elemental'), ('construct','Construct'), ('dragon','Dragon'), ('demon','Demon');
+
+-- NPC DEFINITION: what a kind of creature IS (a Goblin Raider). Runtime INSTANCES
+-- (this goblin at (x,y), 43/80 HP, in combat) are game-state, NOT here -- and an
+-- NPC instance is a live combatant sharing the player's runtime entity shape. AI,
+-- spawning, and behavior are game-server, not content. This row is just identity +
+-- a base statline (npc_stats, reusing stat_definitions) + an ability list
+-- (npc_abilities, reusing abilities) + a loot_table. Summons reference these too.
+CREATE TABLE npc_definitions (
+    id   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    key  text NOT NULL UNIQUE,
+    name text NOT NULL,
+    creature_type_id uuid REFERENCES creature_types(id),
+    level         int NOT NULL DEFAULT 1,
+    disposition   text NOT NULL DEFAULT 'neutral',  -- 'hostile' | 'neutral' | 'friendly' (until factions exist)
+    loot_table_id uuid REFERENCES loot_tables(id),  -- what it drops on death (null = nothing)
+    description text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- An NPC's authored base statline: plain (stat, value) pairs on the same stat
+-- registry players use. Runtime buffs/effects/CC apply as modifiers on top.
+CREATE TABLE npc_stats (
+    id      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    npc_id  uuid NOT NULL REFERENCES npc_definitions(id) ON DELETE CASCADE,
+    stat_id uuid NOT NULL REFERENCES stat_definitions(id),
+    value   numeric NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (npc_id, stat_id)
+);
+
+-- Abilities an NPC can use (reuses the same ability definitions players use).
+CREATE TABLE npc_abilities (
+    id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    npc_id     uuid NOT NULL REFERENCES npc_definitions(id) ON DELETE CASCADE,
+    ability_id uuid NOT NULL REFERENCES abilities(id),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (npc_id, ability_id)
+);
+CREATE INDEX ix_npc_stats_npc ON npc_stats(npc_id);
+CREATE INDEX ix_npc_abilities_npc ON npc_abilities(npc_id);
+
+-- Sample: a Goblin Raider (hostile humanoid, lvl 5, drops the common table,
+-- wields a basic sword swing).
+INSERT INTO npc_definitions (key, name, creature_type_id, level, disposition, loot_table_id, description) VALUES
+    ('goblin_raider', 'Goblin Raider', (SELECT id FROM creature_types WHERE key='humanoid'), 5, 'hostile', (SELECT id FROM loot_tables WHERE key='common_chest'), 'A small, vicious raider.');
+INSERT INTO npc_stats (npc_id, stat_id, value) VALUES
+    ((SELECT id FROM npc_definitions WHERE key='goblin_raider'), (SELECT id FROM stat_definitions WHERE key='health_max'), 80),
+    ((SELECT id FROM npc_definitions WHERE key='goblin_raider'), (SELECT id FROM stat_definitions WHERE key='attack_power'), 10),
+    ((SELECT id FROM npc_definitions WHERE key='goblin_raider'), (SELECT id FROM stat_definitions WHERE key='armor'), 5);
+INSERT INTO npc_abilities (npc_id, ability_id) VALUES
+    ((SELECT id FROM npc_definitions WHERE key='goblin_raider'), (SELECT id FROM abilities WHERE key='slash'));
 
 
 -- -----------------------------------------------------------------------------
@@ -1306,8 +1376,6 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON ability_tags
     FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON proficiency_definitions
     FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
-CREATE TRIGGER set_updated_at BEFORE UPDATE ON proficiency_rank_modifiers
-    FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON race_definitions
     FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON race_modifiers
@@ -1323,6 +1391,14 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON loot_tables
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON loot_entries
     FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON resource_nodes
+    FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON creature_types
+    FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON npc_definitions
+    FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON npc_stats
+    FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON npc_abilities
     FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON storage_types
     FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
@@ -1405,7 +1481,6 @@ COMMENT ON TABLE abilities IS 'Activatable ability definition (cast time, cooldo
 COMMENT ON TABLE ability_effects IS 'Ordered list of payloads an ability performs (damage, heal, apply_effect), each with the shared base plus scaling magnitude shape.';
 COMMENT ON TABLE ability_tags IS 'Many-to-many link between abilities and tags.';
 COMMENT ON TABLE proficiency_definitions IS 'A trainable proficiency (for example one-handed, fire magic) that gates abilities and grants passive modifiers per rank.';
-COMMENT ON TABLE proficiency_rank_modifiers IS 'Passive stat modifiers granted once a character reaches a given rank in a proficiency.';
 COMMENT ON TABLE ability_proficiency_requirements IS 'Gate: the minimum proficiency rank required to use an ability.';
 COMMENT ON TABLE race_definitions IS 'Playable races. Each grants small flavorful stat bonuses via race_modifiers; which race a character is lives in the player DB.';
 COMMENT ON TABLE recipes IS 'A craft: input items -> a fixed output item, optionally gated by a crafting proficiency + rank. success_chance default 1.0. Forward-compatible to affix/quality-tier crafted output.';
@@ -1413,9 +1488,13 @@ COMMENT ON TABLE recipe_ingredients IS 'Input items a recipe consumes, with quan
 COMMENT ON TABLE loot_tables IS 'A weighted list of items a source drops when opened. Entries point at base items; affixes roll separately onto the dropped instance.';
 COMMENT ON TABLE loot_entries IS 'Rows of a loot table: which item, relative weight (weighted-pick), standalone drop_chance (independent, default 1.0), and min/max stack quantity.';
 COMMENT ON TABLE resource_nodes IS 'Definition of a gatherable node (ore vein, tree). Gathering-proficiency gate + a loot_table yield + charge-based depletion/respawn. Runtime placements/depletion are world-DB instance state.';
+COMMENT ON TABLE creature_types IS 'Creature type vocabulary (humanoid, beast, undead, ...); one per NPC, lets effects target a type.';
+COMMENT ON TABLE npc_definitions IS 'Definition of a creature KIND (stats + abilities + loot + identity). Runtime instances (position, current HP, AI, spawning) are game-state, not here.';
+COMMENT ON TABLE npc_stats IS 'An NPC base statline as (stat, value) pairs on the shared stat registry; runtime modifiers apply on top.';
+COMMENT ON TABLE npc_abilities IS 'Abilities an NPC can use (reuses the player ability definitions).';
 COMMENT ON TABLE storage_types IS 'Kinds of storage spaces and their rules (the content side of a universal container model). Runtime container_instances (player DB) point here for behavior; flags encode the full-loot rules (weight_limited, drops_on_death, lootable_by_others, persistent).';
 COMMENT ON TABLE magic_schools IS 'Content/lore extension of the eight school proficiencies (1:1 via proficiency_id). Holds player-facing tagline, lore, and theming; the proficiency row remains the mechanical source of truth.';
-COMMENT ON TABLE race_modifiers IS 'Flat stat bonuses a race grants (mirrors proficiency_rank_modifiers). Resolved by Game.Core as generated modifiers alongside gear, buffs, and attributes.';
+COMMENT ON TABLE race_modifiers IS 'Flat stat bonuses a race grants. Resolved by Game.Core as generated modifiers alongside gear, buffs, and attributes.';
 
 -- Value-level docs for the lookup ("types") tables: what each key means
 COMMENT ON COLUMN modifier_types.key IS 'How the modifier combines on a stat: "flat" adds to base; "increased" sums into one additive percent bucket applied once; "more" multiplies independently (stacks multiplicatively); "override" sets the value outright. Combination math is hardcoded in Game.Core.';
