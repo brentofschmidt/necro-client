@@ -22,7 +22,15 @@
 -- =============================================================================
 
 
+-- Schema: content definitions live in necro_content (the player DB lives in
+-- necro_player and references these tables via cross-schema FKs).
+CREATE SCHEMA IF NOT EXISTS necro_content;
+
 CREATE EXTENSION IF NOT EXISTS pgcrypto;  -- gen_random_uuid(); core in PG13+/Supabase
+
+-- All unqualified objects below are created in necro_content; public stays on the
+-- path so extension functions (gen_random_uuid, moddatetime) resolve.
+SET search_path TO necro_content, public;
 
 
 -- -----------------------------------------------------------------------------
@@ -1267,6 +1275,22 @@ CREATE TABLE zone_types (
 INSERT INTO zone_types (key, name) VALUES
     ('continent','Continent'), ('region','Region'), ('subregion','Subregion');
 
+-- Biome vocabulary (terrain type). Orthogonal to zone_type: a subregion is BOTH
+-- a 'subregion' (tier) AND e.g. a 'mountain' (biome). Biome describes what kind
+-- of place an area is; it does NOT constrain what spawns there -- the exact
+-- per-area resource roster is set by spawn_definitions rows, one per resource,
+-- so developers control each node individually.
+CREATE TABLE biomes (
+    id   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    key  text NOT NULL UNIQUE,        -- 'forest','mountain','cavern',...
+    name text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO biomes (key, name) VALUES
+    ('forest','Forest'), ('mountain','Mountain'), ('cavern','Cavern'),
+    ('swamp','Swamp'), ('plains','Plains'), ('coast','Coast');
+
 -- Named regions of a seamless (WoW-style) world. Continuous terrain lives in the
 -- engine (Unity scenes/terrain); this only NAMES regions and nests them
 -- (continent > zone > sub-area via parent_zone_id) so spawns, quests, and the map
@@ -1277,6 +1301,7 @@ CREATE TABLE zones (
     key  text NOT NULL UNIQUE,
     name text NOT NULL,
     zone_type_id   uuid NOT NULL REFERENCES zone_types(id),  -- continent / region / subregion
+    biome_id       uuid REFERENCES biomes(id),               -- terrain type; most meaningful on subregions (null on broad zones)
     parent_zone_id uuid REFERENCES zones(id),       -- nesting (continent > region > subregion)
     level_min int,
     level_max int,
@@ -1285,12 +1310,17 @@ CREATE TABLE zones (
     updated_at timestamptz NOT NULL DEFAULT now()
 );
 -- Parents first (self-FK resolves by key).
-INSERT INTO zones (key, name, zone_type_id, parent_zone_id, level_min, level_max, description) VALUES
-    ('corremyr', 'Corremyr', (SELECT id FROM zone_types WHERE key='continent'), NULL, NULL, NULL, 'A vast, ancient continent of scattered kingdoms and untamed wilds.');
-INSERT INTO zones (key, name, zone_type_id, parent_zone_id, level_min, level_max, description) VALUES
-    ('elderholt', 'The Elderholt', (SELECT id FROM zone_types WHERE key='region'), (SELECT id FROM zones WHERE key='corremyr'), 5, 10, 'An ancient old-growth forest of colossal, moss-draped trees and deep green shadow.');
-INSERT INTO zones (key, name, zone_type_id, parent_zone_id, level_min, level_max, description) VALUES
-    ('goblin_caves', 'Goblin Caves', (SELECT id FROM zone_types WHERE key='subregion'), (SELECT id FROM zones WHERE key='elderholt'), 5, 8, 'A warren of goblin tunnels beneath the Elderholt.');
+INSERT INTO zones (key, name, zone_type_id, biome_id, parent_zone_id, level_min, level_max, description) VALUES
+    ('corremyr', 'Corremyr', (SELECT id FROM zone_types WHERE key='continent'), NULL, NULL, NULL, NULL, 'A vast, ancient continent of scattered kingdoms and untamed wilds.');
+INSERT INTO zones (key, name, zone_type_id, biome_id, parent_zone_id, level_min, level_max, description) VALUES
+    ('elderholt', 'The Elderholt', (SELECT id FROM zone_types WHERE key='region'), (SELECT id FROM biomes WHERE key='forest'), (SELECT id FROM zones WHERE key='corremyr'), 5, 10, 'An ancient old-growth forest of colossal, moss-draped trees and deep green shadow.');
+INSERT INTO zones (key, name, zone_type_id, biome_id, parent_zone_id, level_min, level_max, description) VALUES
+    ('goblin_caves', 'Goblin Caves', (SELECT id FROM zone_types WHERE key='subregion'), (SELECT id FROM biomes WHERE key='cavern'), (SELECT id FROM zones WHERE key='elderholt'), 5, 8, 'A warren of goblin tunnels beneath the Elderholt.');
+-- Two biome'd sub-areas of the Elderholt with DISTINCT per-resource rosters:
+INSERT INTO zones (key, name, zone_type_id, biome_id, parent_zone_id, level_min, level_max, description) VALUES
+    ('emberpeak_slopes', 'Emberpeak Slopes', (SELECT id FROM zone_types WHERE key='subregion'), (SELECT id FROM biomes WHERE key='mountain'), (SELECT id FROM zones WHERE key='elderholt'), 6, 10, 'Rocky, ore-veined heights rising above the forest canopy.');
+INSERT INTO zones (key, name, zone_type_id, biome_id, parent_zone_id, level_min, level_max, description) VALUES
+    ('old_hollow', 'Old Hollow', (SELECT id FROM zone_types WHERE key='subregion'), (SELECT id FROM biomes WHERE key='forest'), (SELECT id FROM zones WHERE key='elderholt'), 5, 8, 'A deep, herb-rich forest dell beneath the ancient boughs.');
 
 -- What populates a zone, as a RULE (not a placement). Spawns either an NPC or a
 -- resource node (exactly one). max_count caps concurrent live instances; the
@@ -1308,12 +1338,14 @@ CREATE TABLE spawn_definitions (
 );
 CREATE INDEX ix_spawn_definitions_zone ON spawn_definitions(zone_id);
 
--- Sample spawns: goblins in the caves; ore/herbs across the Elderholt.
+-- Sample spawns per biome'd subregion -- ore on the mountain slopes, herbs in
+-- the forest hollow, goblins in the caves. Each resource is its own spawn rule
+-- (own cap + cadence): per-node control, not a shared pool.
 INSERT INTO spawn_definitions (zone_id, npc_definition_id, resource_node_id, max_count, respawn_secs) VALUES
     ((SELECT id FROM zones WHERE key='goblin_caves'), (SELECT id FROM npc_definitions WHERE key='goblin_raider'), NULL, 8, 30),
-    ((SELECT id FROM zones WHERE key='elderholt'), NULL, (SELECT id FROM resource_nodes WHERE key='iron_vein'), 5, 90),
-    ((SELECT id FROM zones WHERE key='elderholt'), NULL, (SELECT id FROM resource_nodes WHERE key='copper_vein'), 6, 60),
-    ((SELECT id FROM zones WHERE key='elderholt'), NULL, (SELECT id FROM resource_nodes WHERE key='herb_patch'), 4, 45);
+    ((SELECT id FROM zones WHERE key='emberpeak_slopes'), NULL, (SELECT id FROM resource_nodes WHERE key='iron_vein'), 5, 90),
+    ((SELECT id FROM zones WHERE key='emberpeak_slopes'), NULL, (SELECT id FROM resource_nodes WHERE key='copper_vein'), 6, 60),
+    ((SELECT id FROM zones WHERE key='old_hollow'), NULL, (SELECT id FROM resource_nodes WHERE key='herb_patch'), 4, 45);
 
 
 -- -----------------------------------------------------------------------------
@@ -1468,6 +1500,8 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON npc_stats
     FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON npc_abilities
     FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON biomes
+    FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON zone_types
     FOR EACH ROW EXECUTE FUNCTION moddatetime(updated_at);
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON zones
@@ -1566,6 +1600,7 @@ COMMENT ON TABLE creature_types IS 'Creature type vocabulary (humanoid, beast, u
 COMMENT ON TABLE npc_definitions IS 'Definition of a creature KIND (stats + abilities + loot + identity). Runtime instances (position, current HP, AI, spawning) are game-state, not here.';
 COMMENT ON TABLE npc_stats IS 'An NPC base statline as (stat, value) pairs on the shared stat registry; runtime modifiers apply on top.';
 COMMENT ON TABLE npc_abilities IS 'Abilities an NPC can use (reuses the player ability definitions).';
+COMMENT ON TABLE biomes IS 'Terrain-type vocabulary (forest, mountain, ...). Orthogonal to zone_type; describes an area, does not constrain spawns (rosters are per-resource spawn_definitions).';
 COMMENT ON TABLE zone_types IS 'Zone tier vocabulary (continent, region, subregion); makes the hierarchy level explicit and queryable.';
 COMMENT ON TABLE zones IS 'Named regions of a seamless world, nested via parent_zone_id. Identity/labels only -- geometry is engine, live state is game-state. level_min/max are difficulty hints.';
 COMMENT ON TABLE spawn_definitions IS 'Rule for what populates a zone: an NPC or a resource node (exactly one), with a concurrent cap and respawn. Actual coordinates and live population are game-state.';
