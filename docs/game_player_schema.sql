@@ -59,6 +59,21 @@ CREATE TABLE characters (
     -- periodic-snapshot fields (authoritative live values live in Redis between
     -- snapshots; these are the last persisted checkpoint).
     last_zone_id uuid REFERENCES necro_content.zones(id),  -- last-known zone (coords are Redis)
+
+    -- Scene-resume snapshot (periodic tier): where the character was and how the
+    -- view was framed when last persisted. Live values are Redis during play;
+    -- these are written on logout / dirty-flag batch and read on login to restore
+    -- the exact scene. real to match Unity/Game.Core float Vector3. Nullable: a
+    -- new character spawns at a default. pos_* + facing are AUTHORITATIVE (facing
+    -- drives combat arcs); cam_* are client view state that resumes per character.
+    last_pos_x  real,
+    last_pos_y  real,
+    last_pos_z  real,
+    last_facing real,            -- character yaw (engine angle convention)
+    cam_yaw     real,            -- free-orbit camera yaw (independent of facing, WoW-style)
+    cam_pitch   real,            -- camera orbit pitch (tilt)
+    cam_zoom    real,            -- camera distance (e.g. 10.0 m)
+
     playtime_secs bigint NOT NULL DEFAULT 0,
 
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -262,7 +277,7 @@ CREATE TRIGGER trg_enforce_equip_slot
 -- -----------------------------------------------------------------------------
 COMMENT ON SCHEMA necro_player IS 'Runtime per-character INSTANCE state (mirror of necro_content definitions). Hot/ephemeral state lives in Redis; this is the durable tier.';
 COMMENT ON TABLE container_instances IS 'A character/world container instance of a necro_content.storage_types kind (backpack/bank/corpse). Holds resolved slot_count; corpses are just a container with the full-loot flags.';
-COMMENT ON TABLE characters IS 'Durable character identity + periodic-snapshot state. Live position/HP/buffs are Redis; account_id is a logical ref to the account tier.';
+COMMENT ON TABLE characters IS 'Durable character identity + periodic-snapshot state (last position, facing, and free-orbit camera for scene resume). Live position/HP/buffs are Redis; account_id is a logical ref to the account tier.';
 COMMENT ON TABLE item_instances IS 'A specific item that exists in the world: references its necro_content.items definition + stores per-instance durability, stack, and location (container+slot, null when equipped or on the ground). Moves between containers without losing identity; durability/affixes travel with it.';
 COMMENT ON TABLE character_equipment IS 'What a character has equipped, one row per typed named slot (references necro_content.equipment_slots). One item per slot; an item can be equipped in only one place.';
 COMMENT ON TABLE character_proficiencies IS 'Per-character rank + accumulated XP in each trained proficiency (the player half of proficiency_definitions). Every XP event (gather/craft/combat) lands here; rank is denormalized from current_xp via the curve.';
@@ -278,12 +293,18 @@ COMMENT ON TABLE item_instance_affixes IS 'Affixes actually rolled onto an insta
 -- proficiencies.
 
 -- A character (account_id is a placeholder logical ref to the account tier).
-INSERT INTO characters (id, account_id, name, race_id, last_zone_id, playtime_secs) VALUES
+INSERT INTO characters
+    (id, account_id, name, race_id, last_zone_id,
+     last_pos_x, last_pos_y, last_pos_z, last_facing, cam_yaw, cam_pitch, cam_zoom,
+     playtime_secs) VALUES
     ('11111111-1111-1111-1111-111111111111',
      '00000000-0000-0000-0000-0000000000a1',
      'Bremmar',
      (SELECT id FROM necro_content.races WHERE key='human'),
      (SELECT id FROM necro_content.zones WHERE key='elderholt'),
+     120.5, 32.0, -440.25,  -- last position in the Elderholt
+     1.5708,                 -- facing east (~90 deg in radians)
+     2.3562, 0.35, 10.0,     -- camera orbited behind-ish, slight tilt, 10m zoom
      7200);
 
 -- Bremmar's backpack (a 16-slot character-scoped container).
