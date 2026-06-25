@@ -1,0 +1,41 @@
+{
+  "items": [
+    {
+      "key": "iron_sword",
+      "name": "Iron Sword",
+      "itemType": "weapon",
+      "category": "one_hand",
+      "slot": "main_hand",
+      "weight": 3.0,
+      "stackMax": 1,
+      "maxDurability": 100,
+      "rarity": "common",
+      "tradeable": true,
+      "droppable": true,
+      "governingProficiency": "sword"
+    },
+    {
+      "key": "small_health_potion",
+      "name": "Small Health Potion",
+      "itemType": "consumable",
+      "category": "potion",
+      "slot": null,
+      "weight": 0.2,
+      "stackMax": 20,
+      "maxDurability": null,
+      "rarity": "common",
+      "tradeable": true,
+      "droppable": true,
+      "governingProficiency": null
+    }
+  ],
+  "affixes": [
+    {
+      "key": "honed",
+      "name": "Honed",
+      "affixType": "prefix",
+      "targetStat": "attack_power",
+      "modifierType": "increased"
+    }
+  ]
+}

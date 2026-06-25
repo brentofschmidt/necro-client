@@ -1,0 +1,17 @@
+<!-- Game.Core shared library (slice). Targets netstandard2.1 so the SAME assembly
+     is referenced by both the Unity client and the authoritative server. -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <Nullable>disable</Nullable>
+    <RootNamespace>Necro.Core</RootNamespace>
+    <LangVersion>9.0</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+  <!-- Demo lives in its own project; exclude it from the library build. -->
+  <ItemGroup>
+    <Compile Remove="Demo/**/*.cs" />
+  </ItemGroup>
+</Project>
